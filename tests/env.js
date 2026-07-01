@@ -35,8 +35,10 @@ var CTX = makeCtx();
 
 function makeEl(id){
   var el = {
-    id: id, textContent: '', style: {}, _h: {}, _cls: {},
+    id: id, textContent: '', value: '', innerHTML: '', disabled: false,
+    style: {}, _h: {}, _cls: {},
     addEventListener: function(t, fn){ this._h[t] = fn; },
+    focus: function(){}, blur: function(){},
     getContext: function(){ return CTX; },
     getBoundingClientRect: function(){ return { width: 400, height: 800, left: 0, top: 0 }; }
   };
@@ -50,7 +52,8 @@ function makeEl(id){
 
 var ELS = {};
 ['game','app','score','best','startOverlay','overOverlay','finalScore','newBest',
- 'overTitle','overEmoji','hint','muteBtn','playBtn','retryBtn'].forEach(function(id){
+ 'overTitle','overEmoji','hint','muteBtn','playBtn','retryBtn',
+ 'lbBox','lbEntry','lbName','lbSave','lbList','lbStatus'].forEach(function(id){
   ELS[id] = makeEl(id);
 });
 ELS.overOverlay._cls.hidden = true;   // matches the initial HTML classes

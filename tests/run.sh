@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Regression tests for the Arcade games. Runs the REAL shipped game code
-# (extracted from each game's index.html) under JavaScriptCore (jsc), so there
-# is no build step and no separate copy of the logic to drift out of sync.
+# Regression tests for Buonalaprima Arcade. Everything runs against the REAL
+# shipped code (extracted from the game HTML / the Worker source) under
+# JavaScriptCore (jsc) — no build step, no duplicated logic to drift.
 #
 # Usage:  tests/run.sh          (or:  JSC=/path/to/jsc tests/run.sh)
 set -uo pipefail
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
-GAME="$DIR/../pancake-tower/index.html"
+ROOT="$DIR/.."
 JSC="${JSC:-/System/Library/Frameworks/JavaScriptCore.framework/Versions/A/Helpers/jsc}"
 
 if [ ! -x "$JSC" ]; then
@@ -18,21 +18,19 @@ fi
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
+rc=0
 
-# pull the inline <script> out of the game's single HTML file
-awk 'f && /<\/script>/{f=0} f; /<script>/{f=1}' "$GAME" > "$TMP/game.js"
+echo "=== Torre di Pancake — game regression suite ==="
+awk 'f && /<\/script>/{f=0} f; /<script>/{f=1}' "$ROOT/pancake-tower/index.html" > "$TMP/game.js"
+if [ ! -s "$TMP/game.js" ]; then echo "could not extract game <script>"; exit 2; fi
+if "$JSC" "$DIR/env.js" "$TMP/game.js" "$DIR/tests.js"; then :; else rc=1; fi
 
-if [ ! -s "$TMP/game.js" ]; then
-  echo "could not extract <script> from $GAME"
-  exit 2
-fi
+echo ""
+echo "=== Leaderboard Worker — logic suite ==="
+awk '/>>> TESTABLE/{f=1;next} /<<< TESTABLE/{f=0} f' "$ROOT/leaderboard/worker.js" > "$TMP/helpers.js"
+if [ ! -s "$TMP/helpers.js" ]; then echo "could not extract Worker helpers"; exit 2; fi
+if "$JSC" "$TMP/helpers.js" "$DIR/leaderboard.tests.js"; then :; else rc=1; fi
 
-echo "Torre di Pancake — regression suite"
-if "$JSC" "$DIR/env.js" "$TMP/game.js" "$DIR/tests.js"; then
-  exit 0
-else
-  code=$?
-  echo ""
-  echo "TESTS FAILED (exit $code)"
-  exit 1
-fi
+echo ""
+if [ "$rc" -eq 0 ]; then echo "ALL SUITES PASSED"; else echo "SOME TESTS FAILED"; fi
+exit "$rc"
