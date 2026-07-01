@@ -258,7 +258,8 @@
   function ensureAudio(){
     if (actx) return;
     const AC = window.AudioContext || window.webkitAudioContext;
-    if (AC) actx = new AC();
+    if (!AC) return;
+    try { actx = new AC(); } catch (e){ actx = null; }   // e.g. too many contexts from stale tabs
   }
   // must be called from a user gesture; also recovers a context suspended by iOS
   function resumeAudio(){
@@ -283,11 +284,107 @@
   }
   function buzz(ms){ if (navigator.vibrate) navigator.vibrate(ms); }
 
+  // ---------- background music (procedural chiptune loop) ----------
+  const BPM = 132;
+  const STEPS = 64;                       // 4 bars at sixteenth-note resolution
+  const secPerStep = 60 / BPM / 4;
+  const NOTE = {
+    C2: 65.41, E2: 82.41, F2: 87.31, G2: 98.00, A2: 110.00,
+    C3: 130.81, D3: 146.83, E3: 164.81, G3: 196.00,
+    G4: 392.00, A4: 440.00, B4: 493.88, C5: 523.25, D5: 587.33,
+    E5: 659.25, F5: 698.46, G5: 783.99, A5: 880.00
+  };
+  // [startStep, note, lengthInSteps] over a I–V–vi–IV loop (C · G · Am · F)
+  const LEAD = [
+    [0,'E5',2],[2,'G5',2],[4,'C5',2],[6,'E5',1],[7,'D5',1],[8,'C5',2],[10,'D5',2],[12,'E5',2],[14,'G5',2],
+    [16,'D5',2],[18,'G5',2],[20,'B4',2],[22,'D5',1],[23,'C5',1],[24,'B4',2],[26,'A4',2],[28,'B4',2],[30,'D5',2],
+    [32,'C5',2],[34,'E5',2],[36,'A4',2],[38,'C5',1],[39,'B4',1],[40,'A4',2],[42,'B4',2],[44,'C5',2],[46,'E5',2],
+    [48,'A4',2],[50,'C5',2],[52,'F5',2],[54,'E5',1],[55,'D5',1],[56,'C5',2],[58,'A4',2],[60,'G4',2],[62,'C5',2]
+  ];
+  const BASS = [
+    [0,'C2',3],[4,'G2',3],[8,'C2',3],[12,'G2',3],
+    [16,'G2',3],[20,'D3',3],[24,'G2',3],[28,'D3',3],
+    [32,'A2',3],[36,'E3',3],[40,'A2',3],[44,'E3',3],
+    [48,'F2',3],[52,'C3',3],[56,'F2',3],[60,'C3',3]
+  ];
+  const leadAt = new Array(STEPS).fill(null);
+  const bassAt = new Array(STEPS).fill(null);
+  LEAD.forEach((n) => { leadAt[n[0]] = { f: NOTE[n[1]], d: n[2] * secPerStep }; });
+  BASS.forEach((n) => { bassAt[n[0]] = { f: NOTE[n[1]], d: n[2] * secPerStep }; });
+
+  let musicGain = null, noiseBuffer = null;
+  let musicOn = false, musicTimer = null, stepIndex = 0, nextStepTime = 0;
+
+  function musicVolume(){ return muted ? 0 : 0.45; }
+  function mNote(freq, time, dur, type, peak){
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, time);
+    o.connect(g); g.connect(musicGain);
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(peak, time + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
+    o.start(time); o.stop(time + dur + 0.03);
+  }
+  function mHat(time){
+    const src = actx.createBufferSource(); src.buffer = noiseBuffer;
+    const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7000;
+    const g = actx.createGain();
+    src.connect(hp); hp.connect(g); g.connect(musicGain);
+    g.gain.setValueAtTime(0.0001, time);
+    g.gain.linearRampToValueAtTime(0.05, time + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
+    src.start(time); src.stop(time + 0.06);
+  }
+  function scheduleStep(step, time){
+    const lead = leadAt[step];
+    if (lead) mNote(lead.f, time, lead.d * 0.92, 'square', 0.12);
+    const bass = bassAt[step];
+    if (bass) mNote(bass.f, time, bass.d * 0.9, 'triangle', 0.18);
+    if (step % 4 === 2) mHat(time);        // soft offbeat groove
+  }
+  function musicScheduler(){
+    if (!musicOn || !actx) return;
+    // resync after a suspend/resume so we never "catch up" a huge burst of past notes
+    if (nextStepTime < actx.currentTime) nextStepTime = actx.currentTime + 0.05;
+    let guard = 0;
+    while (nextStepTime < actx.currentTime + 0.12 && guard++ < 16){
+      scheduleStep(stepIndex, nextStepTime);
+      nextStepTime += secPerStep;
+      stepIndex = (stepIndex + 1) % STEPS;
+    }
+  }
+  function startMusic(){
+    ensureAudio();
+    if (!actx || musicOn) return;
+    if (actx.state === 'suspended') actx.resume();
+    if (!musicGain){ musicGain = actx.createGain(); musicGain.connect(actx.destination); }
+    if (!noiseBuffer){
+      noiseBuffer = actx.createBuffer(1, Math.floor(actx.sampleRate * 0.2), actx.sampleRate);
+      const ch = noiseBuffer.getChannelData(0);
+      for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
+    }
+    musicGain.gain.cancelScheduledValues(actx.currentTime);
+    musicGain.gain.setValueAtTime(0.0001, actx.currentTime);
+    musicGain.gain.linearRampToValueAtTime(musicVolume(), actx.currentTime + 0.3);
+    musicOn = true; stepIndex = 0; nextStepTime = actx.currentTime + 0.08;
+    musicTimer = setInterval(musicScheduler, 25);
+  }
+  function stopMusic(){
+    musicOn = false;
+    if (musicTimer){ clearInterval(musicTimer); musicTimer = null; }
+    if (musicGain && actx){
+      musicGain.gain.cancelScheduledValues(actx.currentTime);
+      musicGain.gain.setValueAtTime(musicGain.gain.value, actx.currentTime);
+      musicGain.gain.linearRampToValueAtTime(0.0001, actx.currentTime + 0.15);
+    }
+  }
+
   muteBtn.addEventListener('click', () => {
     muted = !muted;
     muteBtn.textContent = muted ? '🔇' : '🔊';
     localStorage.setItem('pancakeTowerMuted', muted ? '1' : '0');
     if (!muted) resumeAudio();
+    if (musicGain && actx) musicGain.gain.setTargetAtTime(musicVolume(), actx.currentTime, 0.03);
   });
 
   // ---------- helpers ----------
@@ -383,6 +480,7 @@
     overOverlay.classList.add('hidden');
     lbBox.classList.add('hidden');
     hint.classList.remove('hidden');
+    startMusic();
   }
   function updateHud(){
     elScore.textContent = score;
@@ -448,6 +546,7 @@
     spawnSlice(active.x, top, active.width, active.x < W / 2 ? -1 : 1, true);
     state = 'over';
     sound('over'); buzz(40);
+    stopMusic();
     const isBest = score > best;
     if (isBest){ best = score; localStorage.setItem('pancakeTowerBest', String(best)); }
     updateHud();
@@ -671,7 +770,10 @@
 
   document.getElementById('playBtn').addEventListener('click', start);
   document.getElementById('retryBtn').addEventListener('click', start);
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') resumeAudio(); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible'){ resumeAudio(); if (state === 'playing') startMusic(); }
+    else stopMusic();
+  });
 
   updateHud();
 

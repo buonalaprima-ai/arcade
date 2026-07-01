@@ -12,6 +12,8 @@ var console = {
 };
 
 function setTimeout(){ return 0; }                 // ignore deferred overlay reveal
+function setInterval(){ return 0; }                // music scheduler (never armed head-less)
+function clearInterval(){}
 function requestAnimationFrame(cb){ PENDING = cb; return 1; }
 
 function makeCtx(){
