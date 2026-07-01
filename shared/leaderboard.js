@@ -9,7 +9,7 @@
   "use strict";
 
   // set by leaderboard/deploy.sh after the Worker is deployed
-  var WORKER_URL = 'PASTE_AFTER_DEPLOY';
+  var WORKER_URL = 'https://arcade-leaderboard.buonalaprima.workers.dev';
 
   var configured = WORKER_URL.indexOf('http') === 0;
 
