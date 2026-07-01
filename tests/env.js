@@ -22,7 +22,8 @@ function makeCtx(){
     setTransform: function(){}, save: function(){}, restore: function(){},
     translate: function(){}, rotate: function(){}, scale: function(){},
     beginPath: function(){}, moveTo: function(){}, closePath: function(){},
-    lineTo: function(){}, rect: function(){},
+    lineTo: function(){}, rect: function(){}, setLineDash: function(){},
+    quadraticCurveTo: function(){}, bezierCurveTo: function(){},
     fill: function(){ DRAW_CALLS++; }, stroke: function(){ DRAW_CALLS++; },
     fillRect: function(){}, strokeText: function(){}, fillText: function(){},
     createLinearGradient: gradient, createRadialGradient: gradient,
@@ -62,12 +63,13 @@ ELS.overOverlay._cls.hidden = true;   // matches the initial HTML classes
 
 var document = {
   _h: {}, visibilityState: 'visible',
-  getElementById: function(id){ return ELS[id]; },
+  getElementById: function(id){ if (!ELS[id]) { ELS[id] = makeEl(id); } return ELS[id]; },
   addEventListener: function(t, fn){ this._h[t] = fn; }
 };
 var window = {
   _h: {}, devicePixelRatio: 2, console: console,
-  __PANCAKE_TEST__: {},                 // <- flips the game's test seam on
+  __PANCAKE_TEST__: {},                 // <- flips each game's test seam on
+  __SIZZLE_TEST__: {},
   addEventListener: function(t, fn){ this._h[t] = fn; }
   // no AudioContext -> audio stays disabled during tests
 };

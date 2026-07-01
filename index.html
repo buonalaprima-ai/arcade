@@ -40,7 +40,7 @@
   .tile.live{ background:linear-gradient(150deg,#fff6ec,#ffe6ef); }
   .tile.soon{ opacity:.62; }
   .tile.soon::after{
-    content:"presto"; position:absolute; top:12px; right:12px;
+    content:"soon"; position:absolute; top:12px; right:12px;
     font-size:10px; font-weight:800; letter-spacing:.5px; text-transform:uppercase;
     color:#b58a72; background:rgba(255,255,255,.8);
     padding:3px 8px; border-radius:999px;
@@ -58,24 +58,32 @@
     <header>
       <div class="logo">🎮</div>
       <h1>Buonalaprima Arcade</h1>
-      <p class="tag">mini giochi da tram · una mano sola</p>
+      <p class="tag">one-hand mini games · quick runs</p>
     </header>
 
     <div class="grid">
       <a class="tile live" href="pancake-tower/">
-        <span class="badge-new">nuovo</span>
         <div class="ico">🥞</div>
         <div>
-          <div class="name">Torre di Pancake</div>
-          <div class="sub">impila a tempo</div>
+          <div class="name">Pancake Tower</div>
+          <div class="sub">stack in time</div>
+        </div>
+      </a>
+
+      <a class="tile live" href="sizzle/">
+        <span class="badge-new">new</span>
+        <div class="ico">🍢</div>
+        <div>
+          <div class="name">Sizzle</div>
+          <div class="sub">tap on the fire</div>
         </div>
       </a>
 
       <div class="tile soon" aria-disabled="true">
         <div class="ico">🍳</div>
         <div>
-          <div class="name">Merge Cucina</div>
-          <div class="sub">unisci ingredienti</div>
+          <div class="name">Kitchen Merge</div>
+          <div class="sub">merge ingredients</div>
         </div>
       </div>
 
@@ -83,20 +91,12 @@
         <div class="ico">🍣</div>
         <div>
           <div class="name">Sushi Match</div>
-          <div class="sub">allinea 3+</div>
-        </div>
-      </div>
-
-      <div class="tile soon" aria-disabled="true">
-        <div class="ico">✨</div>
-        <div>
-          <div class="name">In arrivo</div>
-          <div class="sub">altri giochi…</div>
+          <div class="sub">match 3+</div>
         </div>
       </div>
     </div>
 
-    <footer>fatto con 🤖 · buonalaprima-ai</footer>
+    <footer>made with 🤖 · buonalaprima-ai</footer>
   </div>
 </body>
 </html>

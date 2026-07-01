@@ -11,7 +11,8 @@
 
 // >>> TESTABLE (pure helpers — extracted verbatim by tests/leaderboard-worker.test)
 var GAMES = {
-  'pancake-tower': { maxScore: 100000 }
+  'pancake-tower': { maxScore: 100000 },
+  'sizzle': { maxScore: 1000000 }
 };
 var MAX_ENTRIES = 50;      // how many scores we keep per game
 var DEFAULT_TOP = 10;      // how many we return by default

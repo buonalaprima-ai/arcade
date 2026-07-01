@@ -61,6 +61,7 @@ eq(clampLimit('0'), 10, 'floors to default');
 eq(clampLimit('999'), 50, 'caps at MAX_ENTRIES');
 eq(clampLimit(null), 10, 'null -> default');
 ok(knownGame('pancake-tower'), 'known game recognised');
+ok(knownGame('sizzle'), 'second game (sizzle) recognised');
 ok(!knownGame('doom'), 'unknown game rejected');
 
 print('\n' + (FAIL === 0 ? '✅ ' : '❌ ') + PASS + ' passed, ' + FAIL + ' failed');

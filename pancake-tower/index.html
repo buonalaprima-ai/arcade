@@ -6,7 +6,7 @@
 <meta name="theme-color" content="#FFF3E0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<title>Torre di Pancake 🥞</title>
+<title>Pancake Tower 🥞</title>
 <style>
   :root{
     --ink:#5b3a29;
@@ -34,7 +34,7 @@
 
   /* ---- HUD ---- */
   #hud{
-    position:absolute; inset:0; pointer-events:none;
+    position:absolute; inset:0; z-index:6; pointer-events:none;
     padding:max(14px,env(safe-area-inset-top)) 16px 16px;
     display:flex; flex-direction:column;
   }
@@ -136,22 +136,22 @@
       <a class="pill" href="../" aria-label="Menu">‹</a>
       <div id="scoreWrap">
         <div id="score">0</div>
-        <div id="best">record 0</div>
+        <div id="best">best 0</div>
       </div>
       <button class="pill" id="muteBtn" aria-label="Audio">🔊</button>
     </div>
   </div>
 
-  <div id="hint" class="hidden">tocca per impilare 👆</div>
+  <div id="hint" class="hidden">tap to stack 👆</div>
 
   <!-- Start -->
   <div class="overlay" id="startOverlay">
     <div class="card">
       <div class="emoji"><span class="stack-emoji">🥞</span></div>
-      <div class="title">Torre di Pancake</div>
-      <p class="subtitle">Tocca a tempo per impilare i pancake.<br>Più sei preciso, più alta la torre!</p>
-      <button class="btn" id="playBtn">Gioca</button>
-      <a class="menu-link" href="../">← tutti i giochi</a>
+      <div class="title">Pancake Tower</div>
+      <p class="subtitle">Tap in time to stack the pancakes.<br>The more precise you are, the taller the tower!</p>
+      <button class="btn" id="playBtn">Play</button>
+      <a class="menu-link" href="../">← all games</a>
     </div>
   </div>
 
@@ -159,15 +159,15 @@
   <div class="overlay hidden" id="overOverlay">
     <div class="card">
       <div class="emoji" id="overEmoji">🥞</div>
-      <div class="title" id="overTitle">Ops!</div>
+      <div class="title" id="overTitle">Oops!</div>
       <div class="bigscore"><span id="finalScore">0</span></div>
       <div class="newbest" id="newBest"></div>
 
       <div class="lb hidden" id="lbBox">
         <div class="lb-entry hidden" id="lbEntry">
-          <span class="lb-entry-label">Sei in classifica!</span>
+          <span class="lb-entry-label">You made the board!</span>
           <div class="lb-entry-row">
-            <input class="lb-input" id="lbName" maxlength="12" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="il tuo nome" aria-label="Il tuo nome">
+            <input class="lb-input" id="lbName" maxlength="12" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="your name" aria-label="Your name">
             <button class="lb-ok" id="lbSave">OK</button>
           </div>
         </div>
@@ -175,8 +175,8 @@
         <div class="lb-status" id="lbStatus"></div>
       </div>
 
-      <button class="btn" id="retryBtn">Rigioca</button>
-      <a class="menu-link" href="../">← tutti i giochi</a>
+      <button class="btn" id="retryBtn">Play again</button>
+      <a class="menu-link" href="../">← all games</a>
     </div>
   </div>
 </div>
@@ -532,7 +532,7 @@
   }
   function updateHud(){
     elScore.textContent = score;
-    elBest.textContent = 'record ' + best;
+    elBest.textContent = 'best ' + best;
   }
   function newActive(width){
     const dir = Math.random() < 0.5 ? 1 : -1;
@@ -571,7 +571,7 @@
       perfectStreak += 1;
       score += 1 + perfectStreak;
       addParticles(px + pw / 2, top);
-      addFloat(perfectStreak > 1 ? 'PERFETTO x' + perfectStreak : 'PERFETTO!', px + pw / 2, top - 6);
+      addFloat(perfectStreak > 1 ? 'PERFECT x' + perfectStreak : 'PERFECT!', px + pw / 2, top - 6);
       sound('perfect'); buzz(20);
     } else {
       // shave the overhang off as a falling slice
@@ -599,10 +599,10 @@
     if (isBest){ best = score; localStorage.setItem('pancakeTowerBest', String(best)); }
     updateHud();
     elFinal.textContent = score;
-    elNewBest.textContent = isBest && score > 0 ? '🎉 nuovo record!' : '';
-    if (score >= 20){ elOverTitle.textContent = 'Che torre!'; elOverEmoji.textContent = '🤩'; }
-    else if (score >= 8){ elOverTitle.textContent = 'Bel piatto!'; elOverEmoji.textContent = '😋'; }
-    else { elOverTitle.textContent = 'Ops!'; elOverEmoji.textContent = '🥞'; }
+    elNewBest.textContent = isBest && score > 0 ? '🎉 new record!' : '';
+    if (score >= 20){ elOverTitle.textContent = 'What a tower!'; elOverEmoji.textContent = '🤩'; }
+    else if (score >= 8){ elOverTitle.textContent = 'Nice stack!'; elOverEmoji.textContent = '😋'; }
+    else { elOverTitle.textContent = 'Oops!'; elOverEmoji.textContent = '🥞'; }
     const finalScore = score;
     // kick off the leaderboard fetch now so it's usually ready when the card appears
     if (window.Leaderboard && window.Leaderboard.isConfigured()) lbPrefetch = window.Leaderboard.top(GAME_ID, 10);
@@ -636,11 +636,11 @@
     lbBox.classList.remove('hidden');
     lbEntry.classList.add('hidden');
     lbList.innerHTML = '';
-    lbStatus.textContent = 'carico la classifica…';
+    lbStatus.textContent = 'loading leaderboard…';
     const board = await (lbPrefetch || window.Leaderboard.top(GAME_ID, 10));
     lbPrefetch = null;
     if (!board){
-      lbStatus.textContent = 'classifica non disponibile';
+      lbStatus.textContent = 'leaderboard unavailable';
       return;
     }
     renderBoard(board, -1);
@@ -657,16 +657,16 @@
     const name = window.Leaderboard.sanitizeName(lbName.value);
     localStorage.setItem('pancakeName', name);
     lbSave.disabled = true;
-    lbStatus.textContent = 'invio…';
+    lbStatus.textContent = 'sending…';
     const res = await window.Leaderboard.submit(GAME_ID, name, lbPendingScore);
     lbSave.disabled = false;
     if (!res){
-      lbStatus.textContent = 'invio non riuscito, riprova';
+      lbStatus.textContent = 'send failed, try again';
       return;
     }
     lbEntry.classList.add('hidden');
     renderBoard(res.top || [], res.rank || -1);
-    lbStatus.textContent = (res.rank && res.rank > 0) ? ('sei in posizione #' + res.rank + ' 🎉') : 'salvato!';
+    lbStatus.textContent = (res.rank && res.rank > 0) ? ('you are #' + res.rank + ' 🎉') : 'saved!';
   }
 
   lbSave.addEventListener('click', saveScore);
@@ -764,7 +764,7 @@
       ctx.restore();
     }
 
-    // floating "PERFETTO" texts (pop in big, settle, gold->pink gradient)
+    // floating "PERFECT" texts (pop in big, settle, gold->pink gradient)
     for (const f of floats){
       ctx.save();
       ctx.globalAlpha = clamp(f.life, 0, 1);
