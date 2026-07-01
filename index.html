@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#FFF3E0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Buonalaprima Arcade 🎮</title>
+<style>
+  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body{
+    margin:0; min-height:100%;
+    font-family:ui-rounded,"SF Pro Rounded","Nunito",-apple-system,system-ui,sans-serif;
+    background:linear-gradient(165deg,#ffe9cf,#ffd9e6 60%,#ffe7d4);
+    color:#5b3a29;
+    -webkit-user-select:none; user-select:none;
+  }
+  .wrap{
+    max-width:480px; margin:0 auto;
+    padding:max(28px,env(safe-area-inset-top)) 18px calc(40px + env(safe-area-inset-bottom));
+  }
+  header{ text-align:center; margin-bottom:24px; }
+  .logo{ font-size:40px; }
+  h1{ font-size:27px; font-weight:800; margin:6px 0 2px; }
+  .tag{ font-size:14px; font-weight:600; color:#8a6a55; margin:0; }
+
+  .grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px; }
+  .tile{
+    position:relative; display:flex; flex-direction:column; justify-content:space-between;
+    aspect-ratio:1/1; border-radius:24px; padding:16px;
+    text-decoration:none; color:#5b3a29; overflow:hidden;
+    background:rgba(255,255,255,.7); border:1px solid rgba(255,255,255,.85);
+    box-shadow:0 10px 26px rgba(180,110,90,.16);
+    transition:transform .12s ease, box-shadow .12s ease;
+  }
+  .tile.live:active{ transform:scale(.96); box-shadow:0 4px 14px rgba(180,110,90,.16); }
+  .tile .ico{ font-size:46px; line-height:1; filter:drop-shadow(0 5px 5px rgba(180,110,90,.22)); }
+  .tile .name{ font-size:18px; font-weight:800; }
+  .tile .sub{ font-size:12px; font-weight:600; color:#8a6a55; margin-top:2px; }
+  .tile.live{ background:linear-gradient(150deg,#fff6ec,#ffe6ef); }
+  .tile.soon{ opacity:.62; }
+  .tile.soon::after{
+    content:"presto"; position:absolute; top:12px; right:12px;
+    font-size:10px; font-weight:800; letter-spacing:.5px; text-transform:uppercase;
+    color:#b58a72; background:rgba(255,255,255,.8);
+    padding:3px 8px; border-radius:999px;
+  }
+  .badge-new{
+    position:absolute; top:12px; right:12px;
+    font-size:10px; font-weight:800; letter-spacing:.5px; text-transform:uppercase;
+    color:#fff; background:#ff7e9a; padding:3px 8px; border-radius:999px;
+  }
+  footer{ text-align:center; margin-top:28px; font-size:12px; font-weight:600; color:#a98a76; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="logo">🎮</div>
+      <h1>Buonalaprima Arcade</h1>
+      <p class="tag">mini giochi da tram · una mano sola</p>
+    </header>
+
+    <div class="grid">
+      <a class="tile live" href="pancake-tower/">
+        <span class="badge-new">nuovo</span>
+        <div class="ico">🥞</div>
+        <div>
+          <div class="name">Torre di Pancake</div>
+          <div class="sub">impila a tempo</div>
+        </div>
+      </a>
+
+      <div class="tile soon" aria-disabled="true">
+        <div class="ico">🍳</div>
+        <div>
+          <div class="name">Merge Cucina</div>
+          <div class="sub">unisci ingredienti</div>
+        </div>
+      </div>
+
+      <div class="tile soon" aria-disabled="true">
+        <div class="ico">🍣</div>
+        <div>
+          <div class="name">Sushi Match</div>
+          <div class="sub">allinea 3+</div>
+        </div>
+      </div>
+
+      <div class="tile soon" aria-disabled="true">
+        <div class="ico">✨</div>
+        <div>
+          <div class="name">In arrivo</div>
+          <div class="sub">altri giochi…</div>
+        </div>
+      </div>
+    </div>
+
+    <footer>fatto con 🤖 · buonalaprima-ai</footer>
+  </div>
+</body>
+</html>
