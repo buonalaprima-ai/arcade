@@ -604,12 +604,15 @@
     else if (score >= 8){ elOverTitle.textContent = 'Bel piatto!'; elOverEmoji.textContent = '😋'; }
     else { elOverTitle.textContent = 'Ops!'; elOverEmoji.textContent = '🥞'; }
     const finalScore = score;
+    // kick off the leaderboard fetch now so it's usually ready when the card appears
+    if (window.Leaderboard && window.Leaderboard.isConfigured()) lbPrefetch = window.Leaderboard.top(GAME_ID, 10);
     setTimeout(() => { overOverlay.classList.remove('hidden'); showLeaderboard(finalScore); }, 650);
   }
 
   // ---------- leaderboard ----------
   const GAME_ID = 'pancake-tower';
   let lbPendingScore = 0;
+  let lbPrefetch = null;   // leaderboard fetched during the 650ms game-over delay
 
   function cleanName(s){ return String(s).replace(/[^A-Za-z0-9 _-]/g, '').slice(0, 12); }
 
@@ -634,7 +637,8 @@
     lbEntry.classList.add('hidden');
     lbList.innerHTML = '';
     lbStatus.textContent = 'carico la classifica…';
-    const board = await window.Leaderboard.top(GAME_ID, 10);
+    const board = await (lbPrefetch || window.Leaderboard.top(GAME_ID, 10));
+    lbPrefetch = null;
     if (!board){
       lbStatus.textContent = 'classifica non disponibile';
       return;
