@@ -89,5 +89,58 @@ eq(api.strikes(), 0, 'no premature MISSED while still inside the window');
 api.attemptSear();
 ok(api.score() >= 3, 'a late-but-in-window tap still scores (' + api.score() + ')');
 
+// ---------------------------------------------------------------------------
+section('I. the miss detector keeps running while the input cooldown is active');
+api.start();
+api.setArmToFlame(0);            // land a sear -> relocateFlame sets cooldown = COOLDOWN
+api.attemptSear();
+var sI = api.strikes();
+api.passFlameDuringCooldown();   // piece flies past the fire while input is still gated
+frame();
+eq(api.strikes(), sI + 1, 'pass during cooldown still counted as MISSED');
+
+// ---------------------------------------------------------------------------
+section('J. at high speed the fresh fire is always reachable (entry lands after cooldown+reaction)');
+Math.random = function(){ return 0; };   // deterministic min gap from here on
+api.start();
+for (var q = 0; q < 20; q++){ api.setArmToFlame(0.2); api.attemptSear(); }   // ok-sears push omega up
+ok(api.omega() > 4.5, 'omega raised by ok-sears (' + api.omega().toFixed(2) + ')');
+var gapNow = Math.abs(api.err());
+var minNeeded = api.omega() * (0.22 + 0.18) + 0.30;   // omega*(COOLDOWN+REACT)+WINDOW
+ok(gapNow >= minNeeded - 1e-6, 'fire placed at reachable distance (' + gapNow.toFixed(2) + ' >= ' + minNeeded.toFixed(2) + ')');
+var sJ = api.strikes();
+var hitAt = -1;
+for (var fj = 1; fj <= 300; fj++){
+  frame();
+  if (api.strikes() > sJ){ hitAt = fj; break; }
+}
+ok(hitAt > 0, 'untapped pass at high speed is counted as MISSED (frame ' + hitAt + ')');
+eq(api.strikes(), sJ + 1, 'exactly one strike for one pass');
+
+// ---------------------------------------------------------------------------
+section('K. every sear speeds the spin up — PERFECTs included (no cooling reward), capped at max');
+api.start();
+var w0 = api.omega();
+api.setArmToFlame(0); api.attemptSear();                                     // perfect
+ok(api.omega() > w0, 'a perfect also speeds up (' + w0.toFixed(2) + ' -> ' + api.omega().toFixed(2) + ')');
+var w1 = api.omega();
+api.setArmToFlame(0.2); api.attemptSear();                                   // ok sear
+ok(api.omega() > w1, 'an ok sear speeds up (' + w1.toFixed(2) + ' -> ' + api.omega().toFixed(2) + ')');
+for (var k2 = 0; k2 < 60; k2++){ api.setArmToFlame(0); api.attemptSear(); }  // spam sears
+ok(api.omega() <= 6.6 + 1e-9, 'omega capped at max (' + api.omega().toFixed(2) + ')');
+
+// ---------------------------------------------------------------------------
+section('L. gaps are capped so the fire stays reachable even across a reversal');
+Math.random = function(){ return 0.9999; };   // worst case: gaps at the cap, omega at max
+api.start();
+for (var l = 0; l < 40; l++){ api.setArmToFlame(0.2); api.attemptSear(); }
+ok(api.omega() >= 6.6 - 1e-9, 'omega at max (' + api.omega().toFixed(2) + ')');
+var freshGap = Math.abs(api.err());
+ok(freshGap <= 3.35, 'gap capped (' + freshGap.toFixed(2) + ' <= 3.35)');
+// invariant: after a flip (fire stays put) the long way round still gives
+// the full COOLDOWN+REACT margin before the window entry
+var entryAfterFlip = (Math.PI * 2 - freshGap - 0.30) / api.omega();
+ok(entryAfterFlip >= 0.40 - 1e-6, 'post-reversal entry time >= COOLDOWN+REACT (' + entryAfterFlip.toFixed(3) + 's)');
+
 print('\n' + (FAIL === 0 ? '✅ ' : '❌ ') + PASS + ' passed, ' + FAIL + ' failed');
 if (FAIL > 0) throw new Error(FAIL + ' sizzle test(s) failed');

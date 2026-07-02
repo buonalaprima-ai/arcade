@@ -41,6 +41,7 @@ function makeEl(id){
     id: id, textContent: '', value: '', innerHTML: '', disabled: false,
     style: {}, _h: {}, _cls: {},
     addEventListener: function(t, fn){ this._h[t] = fn; },
+    insertAdjacentHTML: function(){},
     focus: function(){}, blur: function(){},
     getContext: function(){ return CTX; },
     getBoundingClientRect: function(){ return { width: 400, height: 800, left: 0, top: 0 }; }

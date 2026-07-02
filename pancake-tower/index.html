@@ -7,208 +7,63 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>Pancake Tower 🥞</title>
+<link rel="stylesheet" href="../shared/arcade.css">
 <style>
   :root{
     --ink:#5b3a29;
     --ink-soft:#8a6a55;
-    --cream:#fff3e0;
-    --pink:#ffe0ea;
     --accent:#ff8aa0;
-    --gold:#f6b545;
+    --bg0:#ffe9cf;
+    --bg1:#ffd9e6;
+    --btn0:#ff9bb0;
+    --btn1:#ff7e9a;
+    --btn-shadow-rgb:255,126,154;
+    --row-tint:rgba(255,170,140,.12);
+    --row-me:rgba(255,126,154,.24);
+    --shade-rgb:180,110,90;
+    --hint-top:54%;
   }
-  *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body{
-    margin:0; height:100%;
-    overscroll-behavior:none; touch-action:manipulation;
-    user-select:none; -webkit-user-select:none;
-    font-family:ui-rounded,"SF Pro Rounded","Nunito",-apple-system,system-ui,sans-serif;
-    background:linear-gradient(160deg,#ffe9cf,#ffd9e6);
-    color:var(--ink);
-  }
-  #app{
-    position:relative; height:100dvh; width:100%;
-    max-width:480px; margin:0 auto; overflow:hidden;
-    box-shadow:0 0 60px rgba(180,110,90,.18);
-  }
-  canvas{ display:block; width:100%; height:100%; touch-action:none; }
-
-  /* ---- HUD ---- */
-  #hud{
-    position:absolute; inset:0; z-index:6; pointer-events:none;
-    padding:max(14px,env(safe-area-inset-top)) 16px 16px;
-    display:flex; flex-direction:column;
-  }
-  .topbar{ display:flex; align-items:center; justify-content:space-between; }
-  .pill{
-    pointer-events:auto;
-    width:42px; height:42px; border-radius:50%;
-    display:flex; align-items:center; justify-content:center;
-    font-size:20px; text-decoration:none; color:var(--ink);
-    background:rgba(255,255,255,.65); backdrop-filter:blur(6px);
-    border:1px solid rgba(255,255,255,.7);
-    box-shadow:0 4px 12px rgba(180,110,90,.18);
-    cursor:pointer;
-  }
-  .pill:active{ transform:scale(.92); }
-  #score{
-    font-size:46px; font-weight:800; letter-spacing:.5px;
-    text-shadow:0 2px 0 rgba(255,255,255,.7); line-height:1;
-    text-align:center;
-  }
-  #scoreWrap{ text-align:center; }
-  #scoreWrap.hidden{ visibility:hidden; }
-  #best{ font-size:13px; font-weight:700; color:var(--ink-soft); margin-top:2px; }
-
-  /* ---- Overlays (start / game over) ---- */
-  .overlay{
-    position:absolute; inset:0; z-index:5;
-    display:flex; align-items:center; justify-content:center;
-    padding:24px; pointer-events:auto;
-  }
-  .overlay.hidden{ display:none; }
-  .card{
-    width:100%; max-width:320px; text-align:center;
-    background:rgba(255,255,255,.86); backdrop-filter:blur(10px);
-    border:1px solid rgba(255,255,255,.9);
-    border-radius:28px; padding:30px 24px 26px;
-    box-shadow:0 18px 50px rgba(180,110,90,.28);
-  }
-  .emoji{ font-size:62px; line-height:1; filter:drop-shadow(0 6px 6px rgba(180,110,90,.25)); }
-  .stack-emoji{ display:inline-block; animation:bob 1.8s ease-in-out infinite; }
-  @keyframes bob{ 0%,100%{ transform:translateY(0) rotate(-3deg);} 50%{ transform:translateY(-8px) rotate(3deg);} }
-  .title{ font-size:28px; font-weight:800; margin:14px 0 4px; }
-  .subtitle{ font-size:15px; font-weight:600; color:var(--ink-soft); margin:0 0 20px; line-height:1.4; }
-  .bigscore{ font-size:54px; font-weight:800; margin:6px 0 0; }
-  .newbest{ font-size:14px; font-weight:800; color:var(--accent); margin-top:6px; height:18px; }
-  .btn{
-    display:inline-block; width:100%; margin-top:20px;
-    padding:16px; border:none; border-radius:18px;
-    font-family:inherit; font-size:19px; font-weight:800; color:#fff;
-    background:linear-gradient(135deg,#ff9bb0,#ff7e9a);
-    box-shadow:0 8px 22px rgba(255,126,154,.45);
-    cursor:pointer;
-  }
-  .btn:active{ transform:translateY(2px); box-shadow:0 4px 12px rgba(255,126,154,.45); }
-  .menu-link{ display:inline-block; margin-top:14px; font-size:14px; font-weight:700; color:var(--ink-soft); text-decoration:none; }
-
-  /* ---- leaderboard ---- */
-  .lb{ margin-top:18px; text-align:left; }
-  .lb.hidden{ display:none; }
-  .lb-entry.hidden{ display:none; }
-  .lb-entry-label{ display:block; text-align:center; font-size:14px; font-weight:800; color:var(--accent); margin-bottom:8px; }
-  .lb-entry-row{ display:flex; gap:8px; justify-content:center; margin-bottom:14px; }
-  .lb-input{
-    flex:1; min-width:0; max-width:220px; text-align:center;
-    font-family:inherit; font-size:18px; font-weight:800; color:var(--ink);
-    padding:10px 12px; border:2px solid var(--accent); border-radius:12px; background:#fff; outline:none;
-  }
-  .lb-ok{
-    padding:0 20px; border:none; border-radius:12px; cursor:pointer;
-    font-family:inherit; font-size:16px; font-weight:800; color:#fff;
-    background:linear-gradient(135deg,#ff9bb0,#ff7e9a);
-  }
-  .lb-ok:disabled{ opacity:.5; }
-  .lb-list{ list-style:none; margin:0; padding:0; }
-  .lb-list li{ display:flex; align-items:center; gap:10px; padding:7px 10px; border-radius:10px; font-weight:700; font-size:15px; }
-  .lb-list li:nth-child(odd){ background:rgba(255,170,140,.12); }
-  .lb-list li.me{ background:rgba(255,126,154,.24); }
-  .lb-rank{ width:22px; text-align:right; color:var(--ink-soft); font-weight:800; }
-  .lb-name{ flex:1; letter-spacing:2px; }
-  .lb-score{ font-weight:800; color:var(--ink); }
-  .lb-status{ margin-top:8px; text-align:center; font-size:13px; font-weight:700; color:var(--ink-soft); min-height:16px; }
-
-  /* ---- tap hint ---- */
-  #hint{
-    position:absolute; left:0; right:0; top:54%;
-    text-align:center; font-size:17px; font-weight:800; color:var(--ink);
-    text-shadow:0 2px 0 rgba(255,255,255,.7);
-    animation:pulse 1.1s ease-in-out infinite; pointer-events:none;
-  }
-  #hint.hidden{ display:none; }
-  @keyframes pulse{ 0%,100%{ transform:translateY(0); opacity:.55; } 50%{ transform:translateY(-6px); opacity:1; } }
 </style>
 </head>
 <body>
 <div id="app">
   <canvas id="game"></canvas>
-
-  <div id="hud">
-    <div class="topbar">
-      <a class="pill" href="../" aria-label="Menu">‹</a>
-      <div id="scoreWrap">
-        <div id="score">0</div>
-        <div id="best">best 0</div>
-      </div>
-      <button class="pill" id="muteBtn" aria-label="Audio">🔊</button>
-    </div>
-  </div>
-
-  <div id="hint" class="hidden">tap to stack 👆</div>
-
-  <!-- Start -->
-  <div class="overlay" id="startOverlay">
-    <div class="card">
-      <div class="emoji"><span class="stack-emoji">🥞</span></div>
-      <div class="title">Pancake Tower</div>
-      <p class="subtitle">Tap in time to stack the pancakes.<br>The more precise you are, the taller the tower!</p>
-      <button class="btn" id="playBtn">Play</button>
-      <a class="menu-link" href="../">← all games</a>
-    </div>
-  </div>
-
-  <!-- Game over -->
-  <div class="overlay hidden" id="overOverlay">
-    <div class="card">
-      <div class="emoji" id="overEmoji">🥞</div>
-      <div class="title" id="overTitle">Oops!</div>
-      <div class="bigscore"><span id="finalScore">0</span></div>
-      <div class="newbest" id="newBest"></div>
-
-      <div class="lb hidden" id="lbBox">
-        <div class="lb-entry hidden" id="lbEntry">
-          <span class="lb-entry-label">You made the board!</span>
-          <div class="lb-entry-row">
-            <input class="lb-input" id="lbName" maxlength="12" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="your name" aria-label="Your name">
-            <button class="lb-ok" id="lbSave">OK</button>
-          </div>
-        </div>
-        <ol class="lb-list" id="lbList"></ol>
-        <div class="lb-status" id="lbStatus"></div>
-      </div>
-
-      <button class="btn" id="retryBtn">Play again</button>
-      <a class="menu-link" href="../">← all games</a>
-    </div>
-  </div>
 </div>
 
 <script src="../shared/leaderboard.js"></script>
+<script src="../shared/arcade.js"></script>
 <script>
 (() => {
   "use strict";
+
+  // ---------- state ----------
+  let state = 'menu';           // 'menu' | 'playing' | 'over'
+  let blocks = [];              // placed pancakes {x,width,placeAnim,hue}
+  let active = null;            // moving pancake {x,width,dir}
+  let slices = [];              // falling overhang pieces (world-space Y)
+  let particles = [];           // sparkles (world-space Y)
+  let floats = [];              // floating texts (world-space Y)
+  let viewY = 0;                // camera offset (0 = plate at the bottom)
+  let score = 0, perfectStreak = 0;
+  let best = parseInt(localStorage.getItem('pancakeTowerBest') || '0', 10) || 0;
+  let firstDropDone = false;
+
+  // ---------- shared shell ----------
+  Arcade.init({
+    gameId: 'pancake-tower',
+    emoji: '🥞',
+    emojiAnim: 'bob',
+    title: 'Pancake Tower',
+    subtitle: 'Tap in time to stack the pancakes.<br>The more precise you are, the taller the tower!',
+    hint: 'tap to stack 👆',
+    onPlay: startRun,
+    isPlaying: () => state === 'playing'
+  });
 
   // ---------- setup ----------
   const canvas = document.getElementById('game');
   const ctx = canvas.getContext('2d');
   const wrap = document.getElementById('app');
-
-  const elScore = document.getElementById('score');
-  const elBest  = document.getElementById('best');
-  const elScoreWrap = document.getElementById('scoreWrap');
-  const startOverlay = document.getElementById('startOverlay');
-  const overOverlay  = document.getElementById('overOverlay');
-  const elFinal = document.getElementById('finalScore');
-  const elNewBest = document.getElementById('newBest');
-  const elOverTitle = document.getElementById('overTitle');
-  const elOverEmoji = document.getElementById('overEmoji');
-  const hint = document.getElementById('hint');
-  const muteBtn = document.getElementById('muteBtn');
-  const lbBox = document.getElementById('lbBox');
-  const lbEntry = document.getElementById('lbEntry');
-  const lbName = document.getElementById('lbName');
-  const lbSave = document.getElementById('lbSave');
-  const lbList = document.getElementById('lbList');
-  const lbStatus = document.getElementById('lbStatus');
 
   // logical canvas size + layout constants (recomputed on resize)
   let W = 0, H = 0;
@@ -217,18 +72,6 @@
   const PERFECT_EPS = 6;   // px tolerance for a "perfect"
   const GROW = 10;         // width reward on a perfect
   const GRAVITY = 1700;    // px/s^2 for falling slices
-
-  // ---------- state ----------
-  let state = 'menu';           // 'menu' | 'playing' | 'over'
-  let blocks = [];              // placed pancakes {x,width,placeAnim,hue}
-  let active = null;            // moving pancake {x,width,dir}
-  let slices = [];             // falling overhang pieces (world-space Y)
-  let particles = [];          // sparkles (world-space Y)
-  let floats = [];             // floating texts (world-space Y)
-  let viewY = 0;               // camera offset (0 = plate at the bottom)
-  let score = 0, perfectStreak = 0;
-  let best = parseInt(localStorage.getItem('pancakeTowerBest') || '0', 10) || 0;
-  let firstDropDone = false;
 
   function resize(){
     const rect = wrap.getBoundingClientRect();
@@ -252,41 +95,14 @@
   window.addEventListener('orientationchange', () => setTimeout(resize, 100));
   resize();
 
-  // ---------- audio ----------
-  let actx = null;
-  let muted = localStorage.getItem('pancakeTowerMuted') === '1';
-  muteBtn.textContent = muted ? '🔇' : '🔊';
-
-  function ensureAudio(){
-    if (actx) return;
-    const AC = window.AudioContext || window.webkitAudioContext;
-    if (!AC) return;
-    try { actx = new AC(); } catch (e){ actx = null; }   // e.g. too many contexts from stale tabs
-  }
-  // must be called from a user gesture; also recovers a context suspended by iOS
-  function resumeAudio(){
-    ensureAudio();
-    if (actx && actx.state === 'suspended') actx.resume();
-  }
-  function tone(f, dur, type, vol, delay){
-    if (muted || !actx) return;
-    const t = actx.currentTime + (delay || 0);
-    const o = actx.createOscillator(), g = actx.createGain();
-    o.type = type; o.frequency.value = f;
-    o.connect(g); g.connect(actx.destination);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(vol, t + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.start(t); o.stop(t + dur + 0.03);
-  }
+  // ---------- SFX ----------
   function sound(name){
-    if (name === 'place')   tone(170 + Math.min(perfectStreak, 8) * 14, 0.12, 'sine', 0.18, 0);
-    if (name === 'perfect'){ tone(523, 0.12, 'triangle', 0.18, 0); tone(784, 0.16, 'triangle', 0.16, 0.07); }
-    if (name === 'over'){ tone(150, 0.5, 'sawtooth', 0.15, 0); tone(80, 0.6, 'sine', 0.12, 0.03); }
+    if (name === 'place')   Arcade.audio.tone(170 + Math.min(perfectStreak, 8) * 14, 0.12, 'sine', 0.18, 0);
+    if (name === 'perfect'){ Arcade.audio.tone(523, 0.12, 'triangle', 0.18, 0); Arcade.audio.tone(784, 0.16, 'triangle', 0.16, 0.07); }
+    if (name === 'over'){ Arcade.audio.tone(150, 0.5, 'sawtooth', 0.15, 0); Arcade.audio.tone(80, 0.6, 'sine', 0.12, 0.03); }
   }
-  function buzz(ms){ if (navigator.vibrate) navigator.vibrate(ms); }
 
-  // ---------- background music (procedural chiptune loop) ----------
+  // ---------- background music (A·B·A·C major chiptune, ~58s loop) ----------
   const BPM = 132;
   const secPerStep = 60 / BPM / 4;
   const NOTE = {
@@ -295,13 +111,10 @@
     G4:392.00, A4:440.00, B4:493.88,
     C5:523.25, D5:587.33, E5:659.25, F5:698.46, G5:783.99, A5:880.00, B5:987.77
   };
-  // oom-pah bass per chord: [rootLow, fifth], played root·fifth·root·fifth per bar
   const CHORD_BASS = {
     C: ['C2','G2'], G: ['G2','D3'], Am: ['A2','E3'],
     F: ['F2','C3'], Em: ['E2','B2'], Dm: ['D2','A2']
   };
-  // A longer song arranged A·B·A·C (32 bars, ~58s) so it doesn't loop as fast.
-  // Each section: 8 bars of chords (drive the bass) + a lead melody [startStep, note, lenSteps].
   const SEC_A = {
     chords: ['C','G','Am','F','C','G','F','G'],
     lead: [
@@ -342,7 +155,6 @@
     ]
   };
   const SONG = [SEC_A, SEC_B, SEC_A, SEC_C];
-
   let STEPS = 0;
   SONG.forEach((s) => { STEPS += s.chords.length * 16; });
   const leadAt = new Array(STEPS).fill(null);
@@ -361,80 +173,17 @@
       off += s.chords.length * 16;
     }
   })();
-
-  let musicGain = null, noiseBuffer = null;
-  let musicOn = false, musicTimer = null, stepIndex = 0, nextStepTime = 0;
-
-  function musicVolume(){ return muted ? 0 : 0.45; }
-  function mNote(freq, time, dur, type, peak){
-    const o = actx.createOscillator(), g = actx.createGain();
-    o.type = type; o.frequency.setValueAtTime(freq, time);
-    o.connect(g); g.connect(musicGain);
-    g.gain.setValueAtTime(0.0001, time);
-    g.gain.linearRampToValueAtTime(peak, time + 0.01);
-    g.gain.exponentialRampToValueAtTime(0.0001, time + dur);
-    o.start(time); o.stop(time + dur + 0.03);
-  }
-  function mHat(time){
-    const src = actx.createBufferSource(); src.buffer = noiseBuffer;
-    const hp = actx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 7000;
-    const g = actx.createGain();
-    src.connect(hp); hp.connect(g); g.connect(musicGain);
-    g.gain.setValueAtTime(0.0001, time);
-    g.gain.linearRampToValueAtTime(0.05, time + 0.004);
-    g.gain.exponentialRampToValueAtTime(0.0001, time + 0.05);
-    src.start(time); src.stop(time + 0.06);
-  }
-  function scheduleStep(step, time){
-    const lead = leadAt[step];
-    if (lead && lead.f) mNote(lead.f, time, lead.d * 0.92, 'square', 0.12);
-    const bass = bassAt[step];
-    if (bass && bass.f) mNote(bass.f, time, bass.d * 0.9, 'triangle', 0.18);
-    if (step % 4 === 2) mHat(time);        // soft offbeat groove
-  }
-  function musicScheduler(){
-    if (!musicOn || !actx) return;
-    // resync after a suspend/resume so we never "catch up" a huge burst of past notes
-    if (nextStepTime < actx.currentTime) nextStepTime = actx.currentTime + 0.05;
-    let guard = 0;
-    while (nextStepTime < actx.currentTime + 0.12 && guard++ < 16){
-      scheduleStep(stepIndex, nextStepTime);
-      nextStepTime += secPerStep;
-      stepIndex = (stepIndex + 1) % STEPS;
+  Arcade.setSong({
+    secPerStep: secPerStep,
+    steps: STEPS,
+    volume: 0.45,
+    onStep(step, time, io){
+      const lead = leadAt[step];
+      if (lead && lead.f) io.note(lead.f, time, lead.d * 0.92, 'square', 0.12);
+      const bass = bassAt[step];
+      if (bass && bass.f) io.note(bass.f, time, bass.d * 0.9, 'triangle', 0.18);
+      if (step % 4 === 2) io.hat(time);
     }
-  }
-  function startMusic(){
-    ensureAudio();
-    if (!actx || musicOn) return;
-    if (actx.state === 'suspended') actx.resume();
-    if (!musicGain){ musicGain = actx.createGain(); musicGain.connect(actx.destination); }
-    if (!noiseBuffer){
-      noiseBuffer = actx.createBuffer(1, Math.floor(actx.sampleRate * 0.2), actx.sampleRate);
-      const ch = noiseBuffer.getChannelData(0);
-      for (let i = 0; i < ch.length; i++) ch[i] = Math.random() * 2 - 1;
-    }
-    musicGain.gain.cancelScheduledValues(actx.currentTime);
-    musicGain.gain.setValueAtTime(0.0001, actx.currentTime);
-    musicGain.gain.linearRampToValueAtTime(musicVolume(), actx.currentTime + 0.3);
-    musicOn = true; stepIndex = 0; nextStepTime = actx.currentTime + 0.08;
-    musicTimer = setInterval(musicScheduler, 25);
-  }
-  function stopMusic(){
-    musicOn = false;
-    if (musicTimer){ clearInterval(musicTimer); musicTimer = null; }
-    if (musicGain && actx){
-      musicGain.gain.cancelScheduledValues(actx.currentTime);
-      musicGain.gain.setValueAtTime(musicGain.gain.value, actx.currentTime);
-      musicGain.gain.linearRampToValueAtTime(0.0001, actx.currentTime + 0.15);
-    }
-  }
-
-  muteBtn.addEventListener('click', () => {
-    muted = !muted;
-    muteBtn.textContent = muted ? '🔇' : '🔊';
-    localStorage.setItem('pancakeTowerMuted', muted ? '1' : '0');
-    if (!muted) resumeAudio();
-    if (musicGain && actx) musicGain.gain.setTargetAtTime(musicVolume(), actx.currentTime, 0.03);
   });
 
   // ---------- helpers ----------
@@ -522,20 +271,13 @@
     active = { x: (W - baseWidth) / 2, width: baseWidth, dir: 1 };
     updateHud();
   }
-  function start(){
-    resumeAudio();
+  function startRun(){
     reset();
     state = 'playing';
-    startOverlay.classList.add('hidden');
-    overOverlay.classList.add('hidden');
-    lbBox.classList.add('hidden');
-    hint.classList.remove('hidden');
-    elScoreWrap.classList.remove('hidden');
-    startMusic();
   }
   function updateHud(){
-    elScore.textContent = score;
-    elBest.textContent = 'best ' + best;
+    Arcade.setScore(score);
+    Arcade.setBest(best);
   }
   function newActive(width){
     const dir = Math.random() < 0.5 ? 1 : -1;
@@ -548,7 +290,7 @@
 
     if (level === 0){
       blocks.push({ x: active.x, width: active.width, placeAnim: 1, hue: 0 });
-      sound('place'); buzz(8);
+      sound('place'); Arcade.audio.buzz(8);
       newActive(active.width);
       score += 1; updateHud();
       finishFirstDrop();
@@ -565,24 +307,23 @@
       return;
     }
 
-    let px = newLeft, pw = overlap, perfect = false;
+    let px = newLeft, pw = overlap;
     if (Math.abs(active.x - below.x) <= PERFECT_EPS){
       // snap perfectly onto the block below (no shrink, small reward)
-      perfect = true;
       pw = Math.min(baseWidth, below.width + GROW);
       px = clamp(below.x - (pw - below.width) / 2, 0, W - pw);
       perfectStreak += 1;
       score += 1 + perfectStreak;
       addParticles(px + pw / 2, top);
       addFloat(perfectStreak > 1 ? 'PERFECT x' + perfectStreak : 'PERFECT!', px + pw / 2, top - 6);
-      sound('perfect'); buzz(20);
+      sound('perfect'); Arcade.audio.buzz(20);
     } else {
       // shave the overhang off as a falling slice
       if (active.x < newLeft) spawnSlice(active.x, top, newLeft - active.x, -1);
       if (active.x + active.width > newRight) spawnSlice(newRight, top, (active.x + active.width) - newRight, 1);
       perfectStreak = 0;
       score += 1;
-      sound('place'); buzz(8);
+      sound('place'); Arcade.audio.buzz(8);
     }
 
     blocks.push({ x: px, width: pw, placeAnim: 1, hue: level });
@@ -591,90 +332,20 @@
     finishFirstDrop();
   }
   function finishFirstDrop(){
-    if (!firstDropDone){ firstDropDone = true; hint.classList.add('hidden'); }
+    if (!firstDropDone){ firstDropDone = true; Arcade.hideHint(); }
   }
   function gameOver(top){
     spawnSlice(active.x, top, active.width, active.x < W / 2 ? -1 : 1, true);
     state = 'over';
-    sound('over'); buzz(40);
-    stopMusic();
+    sound('over'); Arcade.audio.buzz(40);
     const isBest = score > best;
     if (isBest){ best = score; localStorage.setItem('pancakeTowerBest', String(best)); }
     updateHud();
-    elFinal.textContent = score;
-    elNewBest.textContent = isBest && score > 0 ? '🎉 new record!' : '';
-    if (score >= 20){ elOverTitle.textContent = 'What a tower!'; elOverEmoji.textContent = '🤩'; }
-    else if (score >= 8){ elOverTitle.textContent = 'Nice stack!'; elOverEmoji.textContent = '😋'; }
-    else { elOverTitle.textContent = 'Oops!'; elOverEmoji.textContent = '🥞'; }
-    const finalScore = score;
-    // kick off the leaderboard fetch now so it's usually ready when the card appears
-    if (window.Leaderboard && window.Leaderboard.isConfigured()) lbPrefetch = window.Leaderboard.top(GAME_ID, 10);
-    setTimeout(() => { overOverlay.classList.remove('hidden'); elScoreWrap.classList.add('hidden'); showLeaderboard(finalScore); }, 650);
+    let title = 'Oops!', emoji = '🥞';
+    if (score >= 20){ title = 'What a tower!'; emoji = '🤩'; }
+    else if (score >= 8){ title = 'Nice stack!'; emoji = '😋'; }
+    Arcade.gameOver({ score: score, isBest: isBest, title: title, emoji: emoji });
   }
-
-  // ---------- leaderboard ----------
-  const GAME_ID = 'pancake-tower';
-  let lbPendingScore = 0;
-  let lbPrefetch = null;   // leaderboard fetched during the 650ms game-over delay
-
-  function cleanName(s){ return String(s).replace(/[^A-Za-z0-9 _-]/g, '').slice(0, 12); }
-
-  function renderBoard(list, meRank){
-    if (!list || !list.length){ lbList.innerHTML = ''; return; }
-    lbList.innerHTML = list.map((e, i) => {
-      const cls = (i + 1) === meRank ? ' class="me"' : '';
-      const sc = Math.max(0, Math.floor(Number(e.score) || 0));
-      return '<li' + cls + '><span class="lb-rank">' + (i + 1) + '</span>' +
-             '<span class="lb-name">' + cleanName(e.name) + '</span>' +
-             '<span class="lb-score">' + sc + '</span></li>';
-    }).join('');
-  }
-
-  async function showLeaderboard(finalScore){
-    if (!window.Leaderboard || !window.Leaderboard.isConfigured()){
-      lbBox.classList.add('hidden');
-      return;
-    }
-    lbPendingScore = finalScore;
-    lbBox.classList.remove('hidden');
-    lbEntry.classList.add('hidden');
-    lbList.innerHTML = '';
-    lbStatus.textContent = 'loading leaderboard…';
-    const board = await (lbPrefetch || window.Leaderboard.top(GAME_ID, 10));
-    lbPrefetch = null;
-    if (!board){
-      lbStatus.textContent = 'leaderboard unavailable';
-      return;
-    }
-    renderBoard(board, -1);
-    lbStatus.textContent = '';
-    const qualifies = finalScore > 0 && (board.length < 10 || finalScore > board[board.length - 1].score);
-    if (qualifies){
-      lbEntry.classList.remove('hidden');
-      lbName.value = localStorage.getItem('pancakeName') || '';
-      try { lbName.focus(); } catch (e){ /* focus is best-effort */ }
-    }
-  }
-
-  async function saveScore(){
-    const name = window.Leaderboard.sanitizeName(lbName.value);
-    localStorage.setItem('pancakeName', name);
-    lbSave.disabled = true;
-    lbStatus.textContent = 'sending…';
-    const res = await window.Leaderboard.submit(GAME_ID, name, lbPendingScore);
-    lbSave.disabled = false;
-    if (!res){
-      lbStatus.textContent = 'send failed, try again';
-      return;
-    }
-    lbEntry.classList.add('hidden');
-    renderBoard(res.top || [], res.rank || -1);
-    lbStatus.textContent = (res.rank && res.rank > 0) ? ('you are #' + res.rank + ' 🎉') : 'saved!';
-  }
-
-  lbSave.addEventListener('click', saveScore);
-  lbName.addEventListener('input', () => { lbName.value = cleanName(lbName.value); });
-  lbName.addEventListener('keydown', (e) => { if (e.code === 'Enter'){ e.preventDefault(); saveScore(); } });
 
   // ---------- update + render ----------
   function update(dt){
@@ -807,36 +478,28 @@
   canvas.addEventListener('pointerdown', (e) => {
     if (!e.isPrimary) return;       // ignore second finger / palm
     e.preventDefault();
-    resumeAudio();
+    Arcade.audio.resume();
     drop();
   }, { passive: false });
 
   window.addEventListener('keydown', (e) => {
-    const tgt = e.target;
-    if (tgt && (tgt.tagName === 'INPUT' || tgt.tagName === 'TEXTAREA' || tgt.isContentEditable)) return;
+    if (Arcade.isTyping(e)) return;
     if (e.code === 'Space' || e.code === 'Enter'){
       e.preventDefault();
-      resumeAudio();
+      Arcade.audio.resume();
       if (state === 'playing'){ drop(); return; }
       // only (re)start when a menu/over overlay is actually on screen
-      if (!startOverlay.classList.contains('hidden') || !overOverlay.classList.contains('hidden')) start();
+      if (Arcade.overlayVisible()) Arcade.play();
     }
   });
 
-  document.getElementById('playBtn').addEventListener('click', start);
-  document.getElementById('retryBtn').addEventListener('click', start);
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible'){ resumeAudio(); if (state === 'playing') startMusic(); }
-    else stopMusic();
-  });
-
   updateHud();
-  elScoreWrap.classList.add('hidden');   // start screen is showing
 
   // --- test seam: exposes internals to the jsc test suite; completely inert in the browser ---
   if (typeof window !== 'undefined' && window.__PANCAKE_TEST__){
     window.__PANCAKE_TEST__.api = {
-      drawPancake, roundRect, topYFor, start, drop,
+      drawPancake, roundRect, topYFor, drop,
+      start: () => Arcade.play(),
       state: () => state,
       blocks: () => blocks,
       active: () => active,

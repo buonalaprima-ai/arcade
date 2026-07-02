@@ -16,10 +16,15 @@ A little collection of "tram" web games: one hand, quick runs, no account, offli
 ```
 arcade/
 ├── index.html            # hub / launcher
-├── pancake-tower/        # game (single-file)
-├── sizzle/               # game (single-file)
+├── pancake-tower/        # game: canvas + game logic + palette + song data only
+├── sizzle/               # game: canvas + game logic + palette + song data only
 ├── shared/
-│   └── leaderboard.js    # shared leaderboard client (one line: the Worker URL)
+│   ├── arcade.js         # the shell (single source of truth): HUD (back pill,
+│   │                     #   independent music/SFX toggles, score column),
+│   │                     #   start/game-over cards, leaderboard panel,
+│   │                     #   WebAudio SFX + music engine, lifecycle wiring
+│   ├── arcade.css        # shared shell styles (each game sets its palette via CSS vars)
+│   └── leaderboard.js    # leaderboard API client (one line: the Worker URL)
 ├── leaderboard/
 │   ├── worker.js         # Cloudflare Worker: one leaderboard for all games, keyed by `game`
 │   ├── deploy.sh         # deploy Worker + KV via the Cloudflare REST API (no Node)
@@ -27,6 +32,11 @@ arcade/
 └── tests/
     └── run.sh            # jsc regression suites, run against the REAL shipped code
 ```
+
+A game file contains only what makes it unique: its palette (CSS custom
+properties), its canvas rendering + game logic, its SFX map and its chiptune
+song data. Everything else comes from `shared/arcade.js` via
+`Arcade.init({...})` — adding a UI feature to every game is a one-file change.
 
 ## Leaderboard
 

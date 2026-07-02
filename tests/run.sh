@@ -23,13 +23,13 @@ rc=0
 echo "=== Pancake Tower — game regression suite ==="
 awk 'f && /<\/script>/{f=0} f; /<script>/{f=1}' "$ROOT/pancake-tower/index.html" > "$TMP/pancake.js"
 if [ ! -s "$TMP/pancake.js" ]; then echo "could not extract pancake <script>"; exit 2; fi
-if "$JSC" "$DIR/env.js" "$TMP/pancake.js" "$DIR/tests.js"; then :; else rc=1; fi
+if "$JSC" "$DIR/env.js" "$ROOT/shared/arcade.js" "$TMP/pancake.js" "$DIR/tests.js"; then :; else rc=1; fi
 
 echo ""
 echo "=== Sizzle — game regression suite ==="
 awk 'f && /<\/script>/{f=0} f; /<script>/{f=1}' "$ROOT/sizzle/index.html" > "$TMP/sizzle.js"
 if [ ! -s "$TMP/sizzle.js" ]; then echo "could not extract sizzle <script>"; exit 2; fi
-if "$JSC" "$DIR/env.js" "$TMP/sizzle.js" "$DIR/sizzle.tests.js"; then :; else rc=1; fi
+if "$JSC" "$DIR/env.js" "$ROOT/shared/arcade.js" "$TMP/sizzle.js" "$DIR/sizzle.tests.js"; then :; else rc=1; fi
 
 echo ""
 echo "=== Leaderboard Worker — logic suite ==="

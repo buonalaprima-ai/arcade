@@ -1,0 +1,120 @@
+/* Shared shell styles for every Buonalaprima Arcade game.
+   Each game defines its palette via CSS custom properties in its own <style>:
+   --ink, --ink-soft, --accent, --bg0, --bg1, --btn0, --btn1,
+   --btn-shadow-rgb, --row-tint, --row-me, --shade-rgb, --hint-top. */
+
+*{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+html,body{
+  margin:0; height:100%;
+  overscroll-behavior:none; touch-action:manipulation;
+  user-select:none; -webkit-user-select:none;
+  font-family:ui-rounded,"SF Pro Rounded","Nunito",-apple-system,system-ui,sans-serif;
+  background:linear-gradient(160deg,var(--bg0),var(--bg1));
+  color:var(--ink);
+}
+#app{
+  position:relative; height:100dvh; width:100%;
+  max-width:480px; margin:0 auto; overflow:hidden;
+  box-shadow:0 0 60px rgba(var(--shade-rgb),.18);
+}
+canvas{ display:block; width:100%; height:100%; touch-action:none; }
+
+/* ---- HUD ---- */
+#hud{
+  position:absolute; inset:0; z-index:6; pointer-events:none;
+  padding:max(14px,env(safe-area-inset-top)) 16px 16px;
+  display:flex; flex-direction:column;
+}
+.topbar{ display:flex; align-items:flex-start; justify-content:space-between; }
+.pill{
+  pointer-events:auto;
+  width:42px; height:42px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  font-size:19px; text-decoration:none; color:var(--ink);
+  background:rgba(255,255,255,.68); -webkit-backdrop-filter:blur(6px); backdrop-filter:blur(6px);
+  border:1px solid rgba(255,255,255,.72);
+  box-shadow:0 4px 12px rgba(var(--shade-rgb),.18);
+  cursor:pointer; padding:0;
+}
+.pill:active{ transform:scale(.92); }
+.pill.muted{ opacity:.4; }
+.pillcol{ display:flex; flex-direction:column; gap:8px; }
+#scoreWrap{ text-align:center; }
+#scoreWrap.hidden{ visibility:hidden; }
+#score{
+  font-size:46px; font-weight:800; letter-spacing:.5px;
+  text-shadow:0 2px 0 rgba(255,255,255,.65); line-height:1; text-align:center;
+}
+#best{ font-size:13px; font-weight:700; color:var(--ink-soft); margin-top:2px; }
+#strikes{ font-size:20px; margin-top:6px; letter-spacing:2px; height:24px; }
+#strikes:empty{ display:none; }
+
+/* ---- Overlays (start / game over) ---- */
+.overlay{
+  position:absolute; inset:0; z-index:5;
+  display:flex; align-items:center; justify-content:center;
+  padding:24px; pointer-events:auto;
+}
+.overlay.hidden{ display:none; }
+.card{
+  width:100%; max-width:320px; text-align:center;
+  background:rgba(255,255,255,.87); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+  border:1px solid rgba(255,255,255,.9);
+  border-radius:28px; padding:30px 24px 26px;
+  box-shadow:0 18px 50px rgba(var(--shade-rgb),.28);
+}
+.emoji{ font-size:62px; line-height:1; filter:drop-shadow(0 6px 6px rgba(var(--shade-rgb),.25)); }
+.anim-bob{ display:inline-block; animation:arcade-bob 1.8s ease-in-out infinite; }
+.anim-spin{ display:inline-block; animation:arcade-spin 3s linear infinite; }
+@keyframes arcade-bob{ 0%,100%{ transform:translateY(0) rotate(-3deg);} 50%{ transform:translateY(-8px) rotate(3deg);} }
+@keyframes arcade-spin{ from{ transform:rotate(0); } to{ transform:rotate(360deg); } }
+.title{ font-size:28px; font-weight:800; margin:14px 0 4px; }
+.subtitle{ font-size:15px; font-weight:600; color:var(--ink-soft); margin:0 0 20px; line-height:1.4; }
+.bigscore{ font-size:54px; font-weight:800; margin:6px 0 0; }
+.newbest{ font-size:14px; font-weight:800; color:var(--accent); margin-top:6px; height:18px; }
+.btn{
+  display:inline-block; width:100%; margin-top:20px;
+  padding:16px; border:none; border-radius:18px;
+  font-family:inherit; font-size:19px; font-weight:800; color:#fff;
+  background:linear-gradient(135deg,var(--btn0),var(--btn1));
+  box-shadow:0 8px 22px rgba(var(--btn-shadow-rgb),.45);
+  cursor:pointer;
+}
+.btn:active{ transform:translateY(2px); box-shadow:0 4px 12px rgba(var(--btn-shadow-rgb),.45); }
+.menu-link{ display:inline-block; margin-top:14px; font-size:14px; font-weight:700; color:var(--ink-soft); text-decoration:none; }
+
+/* ---- leaderboard panel ---- */
+.lb{ margin-top:18px; text-align:left; }
+.lb.hidden{ display:none; }
+.lb-entry.hidden{ display:none; }
+.lb-entry-label{ display:block; text-align:center; font-size:14px; font-weight:800; color:var(--accent); margin-bottom:8px; }
+.lb-entry-row{ display:flex; gap:8px; justify-content:center; margin-bottom:14px; }
+.lb-input{
+  flex:1; min-width:0; max-width:220px; text-align:center;
+  font-family:inherit; font-size:18px; font-weight:800; color:var(--ink);
+  padding:10px 12px; border:2px solid var(--accent); border-radius:12px; background:#fff; outline:none;
+}
+.lb-ok{
+  padding:0 20px; border:none; border-radius:12px; cursor:pointer;
+  font-family:inherit; font-size:16px; font-weight:800; color:#fff;
+  background:linear-gradient(135deg,var(--btn0),var(--btn1));
+}
+.lb-ok:disabled{ opacity:.5; }
+.lb-list{ list-style:none; margin:0; padding:0; }
+.lb-list li{ display:flex; align-items:center; gap:10px; padding:7px 10px; border-radius:10px; font-weight:700; font-size:15px; }
+.lb-list li:nth-child(odd){ background:var(--row-tint); }
+.lb-list li.me{ background:var(--row-me); }
+.lb-rank{ width:22px; text-align:right; color:var(--ink-soft); font-weight:800; }
+.lb-name{ flex:1; letter-spacing:2px; }
+.lb-score{ font-weight:800; color:var(--ink); }
+.lb-status{ margin-top:8px; text-align:center; font-size:13px; font-weight:700; color:var(--ink-soft); min-height:16px; }
+
+/* ---- tap hint ---- */
+#hint{
+  position:absolute; left:0; right:0; top:var(--hint-top,56%);
+  text-align:center; font-size:17px; font-weight:800; color:var(--ink);
+  text-shadow:0 2px 0 rgba(255,255,255,.65);
+  animation:arcade-pulse 1.1s ease-in-out infinite; pointer-events:none;
+}
+#hint.hidden{ display:none; }
+@keyframes arcade-pulse{ 0%,100%{ transform:translateY(0); opacity:.55; } 50%{ transform:translateY(-6px); opacity:1; } }
