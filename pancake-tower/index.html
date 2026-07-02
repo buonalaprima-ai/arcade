@@ -56,6 +56,7 @@
     text-align:center;
   }
   #scoreWrap{ text-align:center; }
+  #scoreWrap.hidden{ visibility:hidden; }
   #best{ font-size:13px; font-weight:700; color:var(--ink-soft); margin-top:2px; }
 
   /* ---- Overlays (start / game over) ---- */
@@ -193,6 +194,7 @@
 
   const elScore = document.getElementById('score');
   const elBest  = document.getElementById('best');
+  const elScoreWrap = document.getElementById('scoreWrap');
   const startOverlay = document.getElementById('startOverlay');
   const overOverlay  = document.getElementById('overOverlay');
   const elFinal = document.getElementById('finalScore');
@@ -528,6 +530,7 @@
     overOverlay.classList.add('hidden');
     lbBox.classList.add('hidden');
     hint.classList.remove('hidden');
+    elScoreWrap.classList.remove('hidden');
     startMusic();
   }
   function updateHud(){
@@ -606,7 +609,7 @@
     const finalScore = score;
     // kick off the leaderboard fetch now so it's usually ready when the card appears
     if (window.Leaderboard && window.Leaderboard.isConfigured()) lbPrefetch = window.Leaderboard.top(GAME_ID, 10);
-    setTimeout(() => { overOverlay.classList.remove('hidden'); showLeaderboard(finalScore); }, 650);
+    setTimeout(() => { overOverlay.classList.remove('hidden'); elScoreWrap.classList.add('hidden'); showLeaderboard(finalScore); }, 650);
   }
 
   // ---------- leaderboard ----------
@@ -828,6 +831,7 @@
   });
 
   updateHud();
+  elScoreWrap.classList.add('hidden');   // start screen is showing
 
   // --- test seam: exposes internals to the jsc test suite; completely inert in the browser ---
   if (typeof window !== 'undefined' && window.__PANCAKE_TEST__){

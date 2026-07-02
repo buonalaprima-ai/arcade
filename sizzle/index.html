@@ -49,6 +49,7 @@
   }
   .pill:active{ transform:scale(.92); }
   #scoreWrap{ text-align:center; }
+  #scoreWrap.hidden{ visibility:hidden; }
   #score{
     font-size:46px; font-weight:800; letter-spacing:.5px;
     text-shadow:0 2px 0 rgba(255,255,255,.6); line-height:1; text-align:center;
@@ -193,6 +194,7 @@
   const elScore = document.getElementById('score');
   const elBest  = document.getElementById('best');
   const elStrikes = document.getElementById('strikes');
+  const elScoreWrap = document.getElementById('scoreWrap');
   const startOverlay = document.getElementById('startOverlay');
   const overOverlay  = document.getElementById('overOverlay');
   const elFinal = document.getElementById('finalScore');
@@ -497,6 +499,7 @@
     overOverlay.classList.add('hidden');
     lbBox.classList.add('hidden');
     hint.classList.remove('hidden');
+    elScoreWrap.classList.remove('hidden');
     startMusic();
   }
   function speedUp(){
@@ -560,7 +563,7 @@
     else { elOverTitle.textContent = 'Burnt!'; elOverEmoji.textContent = '🔥'; }
     const finalScore = score;
     if (window.Leaderboard && window.Leaderboard.isConfigured()) lbPrefetch = window.Leaderboard.top(GAME_ID, 10);
-    setTimeout(() => { overOverlay.classList.remove('hidden'); showLeaderboard(finalScore); }, 650);
+    setTimeout(() => { overOverlay.classList.remove('hidden'); elScoreWrap.classList.add('hidden'); showLeaderboard(finalScore); }, 650);
   }
 
   // ---------- leaderboard ----------
@@ -956,6 +959,7 @@
   });
 
   updateHud();
+  elScoreWrap.classList.add('hidden');   // start screen is showing
 
   // --- test seam: exposed only to the jsc suite, inert in the browser ---
   if (typeof window !== 'undefined' && window.__SIZZLE_TEST__){
