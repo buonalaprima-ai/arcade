@@ -46,10 +46,6 @@
   const COOLDOWN = 0.22;      // s ignore input right after a resolution (absorbs a reflex follow-up tap)
   const REACT = 0.18;         // s of human reaction margin guaranteed past the cooldown
   const REVERSE_WARN = 1.1;   // s of crank warning before the spin flips
-  // gaps are capped so the fire stays reachable even ACROSS a reversal: the fire
-  // stays put and the arm goes the long way round (2π − gap − WINDOW), which must
-  // take at least COOLDOWN+REACT even at max speed
-  const GAP_CAP = Math.PI * 2 - WINDOW - OMEGA_MAX * (COOLDOWN + REACT);   // ≈ 3.34
 
   // ---------- state ----------
   let state = 'menu';         // 'menu' | 'playing' | 'over'
@@ -234,8 +230,13 @@
   function relocateFlame(){
     // the new fire must stay reachable: entry into the window always lands
     // after the input cooldown plus a human reaction margin, at any speed
+    // lower bound: the window always opens after the input gate + a reaction margin
     const minGap = Math.max(1.1, omega * (COOLDOWN + REACT) + WINDOW);
-    const gap = Math.min(GAP_CAP, minGap + Math.random() * Math.max(0.3, GAP_CAP - minGap));
+    // upper bound: even if the spin reverses (fire stays put, arm takes the long
+    // way round), the flip handler can still preserve the reaction margin. Wide
+    // enough for real positional variety — the fire is NOT pinned near the far end.
+    const maxGap = Math.max(minGap + 0.4, Math.PI * 2 - WINDOW - REACT * omega);
+    const gap = minGap + Math.random() * (maxGap - minGap);
     flame = angNorm(arm + dir * gap);
     enteredWindow = false;
     armed = false;
@@ -332,8 +333,12 @@
         if (reverseTelegraph <= 0){
           dir *= -1;
           searsUntilReverse = 4 + Math.floor(Math.random() * 4);
-          // the fire STAYS where it is; re-approach from the new side
-          enteredWindow = false; armed = false; cooldown = COOLDOWN;
+          // the fire STAYS where it is; the arm now reaches it the long way round.
+          // shorten the input gate just enough to keep the reaction margin at any speed.
+          enteredWindow = false; armed = false;
+          let d = angNorm(dir > 0 ? (flame - arm) : (arm - flame));
+          if (d < 0) d += Math.PI * 2;
+          cooldown = Math.max(0, Math.min(COOLDOWN, (d - WINDOW) / omega - REACT));
           sound('clunk');
         }
       }
@@ -661,6 +666,7 @@
       strikes: () => strikes,
       omega: () => omega,
       err: () => angNorm(flame - arm),
+      gap: () => { let d = angNorm(dir > 0 ? (flame - arm) : (arm - flame)); if (d < 0) d += Math.PI * 2; return d; },
       setArmToFlame: (offset) => { arm = angNorm(flame - (offset || 0)); cooldown = 0; },
       passFlame: () => { armed = true; enteredWindow = true; arm = angNorm(flame + dir * (WINDOW + 0.05)); cooldown = 0; },
       // like passFlame but WITHOUT clearing the input cooldown — proves the

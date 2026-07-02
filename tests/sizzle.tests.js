@@ -105,7 +105,7 @@ Math.random = function(){ return 0; };   // deterministic min gap from here on
 api.start();
 for (var q = 0; q < 20; q++){ api.setArmToFlame(0.2); api.attemptSear(); }   // ok-sears push omega up
 ok(api.omega() > 4.5, 'omega raised by ok-sears (' + api.omega().toFixed(2) + ')');
-var gapNow = Math.abs(api.err());
+var gapNow = api.gap();
 var minNeeded = api.omega() * (0.22 + 0.18) + 0.30;   // omega*(COOLDOWN+REACT)+WINDOW
 ok(gapNow >= minNeeded - 1e-6, 'fire placed at reachable distance (' + gapNow.toFixed(2) + ' >= ' + minNeeded.toFixed(2) + ')');
 var sJ = api.strikes();
@@ -130,17 +130,22 @@ for (var k2 = 0; k2 < 60; k2++){ api.setArmToFlame(0); api.attemptSear(); }  // 
 ok(api.omega() <= 6.6 + 1e-9, 'omega capped at max (' + api.omega().toFixed(2) + ')');
 
 // ---------------------------------------------------------------------------
-section('L. gaps are capped so the fire stays reachable even across a reversal');
-Math.random = function(){ return 0.9999; };   // worst case: gaps at the cap, omega at max
+section('L. fire position varies at speed, yet stays reachable across a reversal');
+Math.random = function(){ return 0.9999; };   // largest gap
 api.start();
 for (var l = 0; l < 40; l++){ api.setArmToFlame(0.2); api.attemptSear(); }
 ok(api.omega() >= 6.6 - 1e-9, 'omega at max (' + api.omega().toFixed(2) + ')');
-var freshGap = Math.abs(api.err());
-ok(freshGap <= 3.35, 'gap capped (' + freshGap.toFixed(2) + ' <= 3.35)');
-// invariant: after a flip (fire stays put) the long way round still gives
-// the full COOLDOWN+REACT margin before the window entry
-var entryAfterFlip = (Math.PI * 2 - freshGap - 0.30) / api.omega();
-ok(entryAfterFlip >= 0.40 - 1e-6, 'post-reversal entry time >= COOLDOWN+REACT (' + entryAfterFlip.toFixed(3) + 's)');
+var w = api.omega();
+var gMax = api.gap();
+Math.random = function(){ return 0; };         // smallest gap
+api.start();
+for (var l2 = 0; l2 < 40; l2++){ api.setArmToFlame(0.2); api.attemptSear(); }
+var gMin = api.gap();
+ok(gMax - gMin > 0.8, 'meaningful positional spread at max speed (' + gMin.toFixed(2) + '..' + gMax.toFixed(2) + ', not pinned near π)');
+// invariant: even the largest gap, flipped (fire stays put, long way round),
+// keeps at least the human reaction margin before the window opens
+var entryLongWay = (Math.PI * 2 - gMax - 0.30) / w;
+ok(entryLongWay >= 0.18 - 1e-6, 'largest gap still reachable after a flip (' + entryLongWay.toFixed(3) + 's >= REACT)');
 
 print('\n' + (FAIL === 0 ? '✅ ' : '❌ ') + PASS + ' passed, ' + FAIL + ' failed');
 if (FAIL > 0) throw new Error(FAIL + ' sizzle test(s) failed');
