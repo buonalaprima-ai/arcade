@@ -606,6 +606,14 @@
   }
   canvas.addEventListener('pointerup', endHold, { passive: false });
   canvas.addEventListener('pointercancel', endHold, { passive: false });
+  // iOS Safari draws the long-press selection loupe on the TOUCH layer, which a
+  // pointerdown.preventDefault() can't reach (Pointer Events are synthesized on top of
+  // Touch Events). Cancelling the real, non-passive touch events is what suppresses it.
+  // Pointer events still fire, so the hold is unaffected; scoped to the canvas so the
+  // DOM overlay buttons keep their native taps.
+  canvas.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+  canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
 
   window.addEventListener('keydown', (e) => {
     if (Arcade.isTyping(e)) return;
