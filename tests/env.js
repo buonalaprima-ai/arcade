@@ -22,10 +22,11 @@ function makeCtx(){
     setTransform: function(){}, save: function(){}, restore: function(){},
     translate: function(){}, rotate: function(){}, scale: function(){},
     beginPath: function(){}, moveTo: function(){}, closePath: function(){},
-    lineTo: function(){}, rect: function(){}, setLineDash: function(){},
+    lineTo: function(){}, rect: function(){}, setLineDash: function(){}, clip: function(){},
     quadraticCurveTo: function(){}, bezierCurveTo: function(){},
     fill: function(){ DRAW_CALLS++; }, stroke: function(){ DRAW_CALLS++; },
-    fillRect: function(){}, strokeText: function(){}, fillText: function(){},
+    fillRect: function(){}, strokeRect: function(){ DRAW_CALLS++; },
+    strokeText: function(){}, fillText: function(){},
     createLinearGradient: gradient, createRadialGradient: gradient,
     arcTo: function(x1,y1,x2,y2,r){ if (r < 0) throw new Error('IndexSizeError: arcTo radius ' + r); },
     arc:   function(x,y,r){ if (r < 0) throw new Error('IndexSizeError: arc radius ' + r); },
@@ -71,6 +72,7 @@ var window = {
   _h: {}, devicePixelRatio: 2, console: console,
   __PANCAKE_TEST__: {},                 // <- flips each game's test seam on
   __SIZZLE_TEST__: {},
+  __ESPRESSO_TEST__: {},
   addEventListener: function(t, fn){ this._h[t] = fn; }
   // no AudioContext -> audio stays disabled during tests
 };

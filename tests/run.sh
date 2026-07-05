@@ -32,6 +32,12 @@ if [ ! -s "$TMP/sizzle.js" ]; then echo "could not extract sizzle <script>"; exi
 if "$JSC" "$DIR/env.js" "$ROOT/shared/arcade.js" "$TMP/sizzle.js" "$DIR/sizzle.tests.js"; then :; else rc=1; fi
 
 echo ""
+echo "=== Perfect Espresso — game regression suite ==="
+awk 'f && /<\/script>/{f=0} f; /<script>/{f=1}' "$ROOT/espresso/index.html" > "$TMP/espresso.js"
+if [ ! -s "$TMP/espresso.js" ]; then echo "could not extract espresso <script>"; exit 2; fi
+if "$JSC" "$DIR/env.js" "$ROOT/shared/arcade.js" "$TMP/espresso.js" "$DIR/espresso.tests.js"; then :; else rc=1; fi
+
+echo ""
 echo "=== Leaderboard Worker — logic suite ==="
 awk '/>>> TESTABLE/{f=1;next} /<<< TESTABLE/{f=0} f' "$ROOT/leaderboard/worker.js" > "$TMP/helpers.js"
 if [ ! -s "$TMP/helpers.js" ]; then echo "could not extract Worker helpers"; exit 2; fi

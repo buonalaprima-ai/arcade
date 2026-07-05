@@ -1,0 +1,656 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#F0E0CB">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Espresso ☕</title>
+<link rel="stylesheet" href="../shared/arcade.css">
+<style>
+  :root{
+    --ink:#4a2f1c;
+    --ink-soft:#8c6b4f;
+    --accent:#159a52;
+    --bg0:#f3e3cb;
+    --bg1:#e2c193;
+    --btn0:#2bb568;
+    --btn1:#1a8f4c;
+    --btn-shadow-rgb:26,143,76;
+    --row-tint:rgba(150,110,70,.12);
+    --row-me:rgba(43,181,104,.22);
+    --shade-rgb:120,80,45;
+    --hint-top:57%;
+  }
+  /* the hint sits over the dark gauge, so it needs light text */
+  #hint{ color:#fbf3e6; text-shadow:0 1px 4px rgba(0,0,0,.75); }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+</div>
+
+<script src="../shared/leaderboard.js"></script>
+<script src="../shared/arcade.js"></script>
+<script>
+(() => {
+  "use strict";
+
+  // ---------- tuning ----------
+  const STRIKES_MAX = 3;
+  // needle physics (needle 0 = bottom/sputter, 1 = top/scream)
+  const RISE = 3.2;          // upward accel while holding (building pressure) — snappy, near-symmetric with the bleed
+  const BLEED0 = 1.9;        // downward accel (bleeding), grows with difficulty
+  const VMAX = 1.15;         // clamp on |velocity|
+  const DAMP = 1.25;         // velocity damping (stability)
+  const MERCY = 0.55;        // s of grace right after a strike
+  // channel / scoring
+  const SCROLL = 0.5;        // channel scroll speed as a fraction of width / sec
+  const ORBX = 0.26;         // orb x as a fraction of width ("now" line) — more lead time
+  const CUP0 = 2.4;          // s of in-flow to fill a cup (shrinks with difficulty)
+
+  // ---------- state ----------
+  let state = 'menu';        // 'menu' | 'playing' | 'over'
+  let needle = 0.5, vel = 0;
+  let held = false;
+  let inFlow = false, outTime = 0, mercyT = 0;
+  let fill = 0;              // 0..1 current cup
+  let served = 0, played = 0;
+  let phaseA = 0, phaseB = 0, phaseC = 0;   // continuously accumulated wave phases — never snap
+  let score = 0, combo = 1, strikes = 0;
+  let best = parseInt(localStorage.getItem('espressoBest') || '0', 10) || 0;
+  let clock = 0, shake = 0, glow = 0, firstHold = false;
+  let particles = [], floats = [], steam = [], pops = [], belt = [];
+  let pinned = false;        // test-only: freeze physics so a suite can place the needle
+  let holdId = null;         // the one pointer that owns the current hold
+
+  // ---------- shared shell ----------
+  Arcade.init({
+    gameId: 'espresso',
+    emoji: '☕',
+    emojiAnim: 'bob',
+    title: 'Espresso',
+    subtitle: 'Hold to build pressure, release to bleed&nbsp;it.<br>Keep the needle in the green as the shot&nbsp;runs away from you.',
+    hint: 'hold to build pressure',
+    onPlay: startRun,
+    isPlaying: () => state === 'playing'
+  });
+
+  // ---------- setup ----------
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const wrap = document.getElementById('app');
+
+  let W = 0, H = 0, zoneTop = 0, zoneH = 0, orbX = 0, brewX = 0, beltTop = 0, cupSize = 0;
+  function resize(){
+    const rect = wrap.getBoundingClientRect();
+    W = rect.width; H = rect.height;
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    zoneTop = H * 0.15; zoneH = H * 0.56;
+    orbX = W * ORBX;
+    const zbb = zoneTop + zoneH;
+    brewX = W * 0.28;                           // where the current cup brews
+    cupSize = Math.min(W * 0.15, 56);
+    beltTop = zbb + (H - zbb) * 0.5;            // conveyor-belt surface (cups' base)
+  }
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+  resize();
+
+  function zoneY(v){ return zoneTop + (1 - clamp(v, 0, 1)) * zoneH; }
+
+  // ---------- SFX ----------
+  function sound(name){
+    if (name === 'cup'){
+      // "sfiato" — pressure blows off to zero, then starts rising again (steam release)
+      Arcade.audio.tone(430, 0.07, 'sawtooth', 0.06, 0);
+      Arcade.audio.tone(260, 0.10, 'sawtooth', 0.06, 0.06);
+      Arcade.audio.tone(150, 0.14, 'sawtooth', 0.05, 0.14);
+      Arcade.audio.tone(1800, 0.05, 'triangle', 0.02, 0.02);     // wispy steam hiss on top
+      Arcade.audio.tone(2100, 0.05, 'triangle', 0.015, 0.08);
+      Arcade.audio.tone(120, 0.13, 'square', 0.05, 0.24);        // pressure rising again
+      Arcade.audio.tone(190, 0.13, 'square', 0.045, 0.34);
+    }
+    if (name === 'strike'){ Arcade.audio.tone(150, 0.26, 'sawtooth', 0.16, 0); Arcade.audio.tone(84, 0.30, 'square', 0.11, 0.02); }
+    if (name === 'over'){ Arcade.audio.tone(150, 0.5, 'sawtooth', 0.15, 0); Arcade.audio.tone(70, 0.6, 'sine', 0.12, 0.03); }
+  }
+  let scrapeAt = 0;
+  function scrape(){               // a soft, low friction/scrape while the needle sits in the green
+    if (clock - scrapeAt < 0.075) return;
+    scrapeAt = clock;
+    Arcade.audio.tone(60 + Math.random() * 45, 0.06, 'sawtooth', 0.016, 0);
+  }
+
+  // ---------- background music (driving "pressure" chiptune — tense, pumping bass) ----------
+  const BPM = 142;
+  const secPerStep = 60 / BPM / 4;
+  const NOTE = {
+    E2:82.41, F2:87.31, G2:98.00, A2:110.00, B2:123.47, C3:130.81, D3:146.83, E3:164.81,
+    GS4:415.30, A4:440.00, B4:493.88, C5:523.25, D5:587.33, E5:659.25,
+    F5:698.46, G5:783.99, GS5:830.61, A5:880.00
+  };
+  const ROOT = { Am:'A2', Dm:'D3', F:'F2', G:'G2', E:'E2', C:'C3' };   // chord root for the pumping bass
+  const SEC_A = {
+    chords: ['Am', 'F', 'G', 'E', 'Am', 'F', 'G', 'E'],
+    lead: [
+      [0,'A4',3],[4,'E5',3],[8,'C5',3],[12,'E5',2],[14,'D5',2],
+      [16,'C5',3],[20,'F5',3],[24,'A4',3],[28,'C5',3],
+      [32,'B4',3],[36,'G5',3],[40,'D5',3],[44,'B4',3],
+      [48,'GS4',3],[52,'E5',3],[56,'B4',3],[60,'E5',2],[62,'GS5',2],
+      [64,'A4',3],[68,'E5',3],[72,'C5',3],[76,'E5',2],[78,'D5',2],
+      [80,'C5',3],[84,'F5',3],[88,'A4',3],[92,'C5',3],
+      [96,'B4',3],[100,'G5',3],[104,'D5',3],[108,'G5',2],[110,'B4',2],
+      [112,'GS4',3],[116,'E5',3],[120,'GS5',3],[124,'E5',3]
+    ]
+  };
+  const SEC_B = {
+    chords: ['Dm', 'Dm', 'Am', 'Am', 'F', 'G', 'E', 'E'],
+    lead: [
+      [0,'D5',3],[4,'A4',3],[8,'F5',3],[12,'D5',2],[14,'A4',2],
+      [16,'A4',3],[20,'D5',3],[24,'F5',3],[28,'A5',3],
+      [32,'C5',3],[36,'E5',3],[40,'A4',3],[44,'C5',3],
+      [48,'E5',3],[52,'A5',3],[56,'E5',3],[60,'C5',2],[62,'A4',2],
+      [64,'C5',3],[68,'F5',3],[72,'A4',3],[76,'C5',3],
+      [80,'D5',3],[84,'G5',3],[88,'B4',3],[92,'D5',3],
+      [96,'GS4',3],[100,'E5',3],[104,'B4',3],[108,'GS5',3],
+      [112,'E5',3],[116,'GS5',3],[120,'B4',3],[124,'E5',3]
+    ]
+  };
+  const SONG = [SEC_A, SEC_B, SEC_A, SEC_B];
+  let STEPS = 0;
+  SONG.forEach((s) => { STEPS += s.chords.length * 16; });
+  const leadAt = new Array(STEPS).fill(null);
+  const bassAt = new Array(STEPS).fill(null);
+  (function buildSong(){
+    let off = 0;
+    for (const s of SONG){
+      s.chords.forEach((ch, bar) => {
+        const root = NOTE[ROOT[ch]], b = off + bar * 16;
+        for (let k = 0; k < 16; k += 2){ bassAt[b + k] = { f: root, d: 1.5 * secPerStep }; }  // pumping 8th-note bass
+      });
+      s.lead.forEach((n) => { leadAt[off + n[0]] = { f: NOTE[n[1]], d: n[2] * secPerStep }; });
+      off += s.chords.length * 16;
+    }
+  })();
+  Arcade.setSong({
+    secPerStep: secPerStep,
+    steps: STEPS,
+    volume: 0.5,
+    onStep(step, time, io){
+      const lead = leadAt[step];
+      if (lead && lead.f) io.note(lead.f, time, lead.d * 0.9, 'square', 0.085);
+      const bass = bassAt[step];
+      if (bass && bass.f) io.note(bass.f, time, bass.d * 0.85, 'square', 0.14);
+      if (step % 4 === 2) io.hat(time);   // offbeat drive
+    }
+  });
+
+  // ---------- helpers ----------
+  function clamp(v, a, b){ return v < a ? a : (v > b ? b : v); }
+  function roundRect(x, y, w, h, r){
+    if (!(w > 0) || !(h > 0)){ ctx.beginPath(); return; }
+    r = Math.max(0, Math.min(r, w / 2, h / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  // a little espresso demitasse with a coffee fill (0..1), on a saucer, with a handle
+  function drawCup(cx, topY, size, fillFrac){
+    ctx.fillStyle = 'rgba(0,0,0,.16)';
+    ctx.beginPath(); ctx.ellipse(cx, topY + size + 3, size * 0.62, 5, 0, 0, 7); ctx.fill();
+    ctx.strokeStyle = '#efe0cc'; ctx.lineWidth = size * 0.1; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.arc(cx + size * 0.52, topY + size * 0.52, size * 0.22, -1.4, 1.4); ctx.stroke();
+    roundRect(cx - size / 2, topY, size, size, size * 0.16);
+    const g = ctx.createLinearGradient(cx - size / 2, 0, cx + size / 2, 0);
+    g.addColorStop(0, '#fffaf3'); g.addColorStop(1, '#e6d4bf');
+    ctx.fillStyle = g; ctx.fill();
+    if (fillFrac > 0.01){
+      ctx.save();
+      roundRect(cx - size / 2 + 3, topY + 3, size - 6, size - 6, size * 0.1);
+      ctx.clip();
+      const fy = topY + 3 + (1 - clamp(fillFrac, 0, 1)) * (size - 6);
+      const c2 = ctx.createLinearGradient(0, fy, 0, topY + size);
+      c2.addColorStop(0, '#5b3418'); c2.addColorStop(1, '#38200e');
+      ctx.fillStyle = c2; ctx.fillRect(cx - size / 2, fy, size, size);
+      ctx.fillStyle = 'rgba(199,154,99,.9)'; ctx.fillRect(cx - size / 2, fy, size, 3);
+      ctx.restore();
+    }
+    ctx.strokeStyle = 'rgba(120,80,45,.3)'; ctx.lineWidth = 2;
+    roundRect(cx - size / 2, topY, size, size, size * 0.16); ctx.stroke();
+  }
+
+  // ---------- difficulty & channel ----------
+  function diffNow(){ return played * 0.055; }                   // smooth time-based ramp — a bit quicker now
+  function chanHalf(){ return clamp(0.21 - diffNow() * 0.07, 0.06, 0.21); }   // starts WIDE, narrows quicker
+  function omega(){ return 0.85 + diffNow() * 0.08; }            // wave speed -> steeper sweeps, grows with difficulty
+  function bleed(){ return clamp(BLEED0 + diffNow() * 0.10, BLEED0, 3.0); }
+  function grace(){ return clamp(0.34 - diffNow() * 0.015, 0.16, 0.34); }
+  function cupTime(){ return clamp(CUP0 - diffNow() * 0.08, 1.3, CUP0); }
+  // Channel centerline sampled dtAhead seconds ahead of "now" (0 = at the orb).
+  // Three continuously ACCUMULATED phases (never snap), summed with weights that add to 1,
+  // times an amplitude BUDGET that keeps the WHOLE band inside the gauge — so nothing ever
+  // clamps and every rise/dip stays a smooth curve (no hard corners). The budget GROWS as the
+  // channel narrows, so the sweeps get bigger & steeper with difficulty.
+  function chanAt(dtAhead){
+    const w = omega();
+    const A = Math.max(0.06, 0.5 - chanHalf() - 0.03);
+    const s = 0.52 * Math.sin(phaseA + w * 0.45 * dtAhead)
+            + 0.33 * Math.sin(phaseB + w * 1.1 * dtAhead + 1.3)
+            + 0.15 * Math.sin(phaseC + w * 2.3 * dtAhead + 2.1);
+    return 0.5 + A * s;
+  }
+  function targetNow(){ return chanAt(0); }
+  function isIn(){ return Math.abs(needle - targetNow()) <= chanHalf(); }
+
+  // ---------- fx helpers ----------
+  function addParticles(x, y, hue, n, spread){
+    for (let i = 0; i < n; i++){
+      const ang = Math.random() * Math.PI * 2;
+      const sp = 40 + Math.random() * (spread || 150);
+      particles.push({ x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 30, life: 1, hue });
+    }
+  }
+  function addFloat(text, x, y, color){ floats.push({ text, x, y, life: 1, color: color || '#37d17a' }); }
+
+  // ---------- game flow ----------
+  function updateHud(){
+    Arcade.setScore(Math.floor(score));
+    Arcade.setBest(best);
+    const left = STRIKES_MAX - strikes;
+    Arcade.setStrikes('●'.repeat(Math.max(0, left)) + '○'.repeat(strikes));
+  }
+  function reset(){
+    if (holdId !== null){
+      if (canvas.releasePointerCapture){ try { canvas.releasePointerCapture(holdId); } catch (e){} }
+      holdId = null;
+    }
+    needle = 0.5; vel = 0; held = false;
+    inFlow = false; outTime = 0; mercyT = 0; fill = 0;
+    served = 0; played = 0; phaseA = 0; phaseB = 0; phaseC = 0;
+    score = 0; combo = 1; strikes = 0;
+    particles = []; floats = []; steam = []; pops = []; belt = [];
+    shake = 0; glow = 0; firstHold = false;
+    updateHud();
+  }
+  function startRun(){
+    reset();
+    state = 'playing';
+  }
+  function completeCup(){
+    served += 1; fill = 0;
+    const pts = combo;                             // small, cup-based scoring (keeps totals modest, like the sibling games)
+    score += pts;
+    combo += 1;
+    belt.push({ x: brewX });                       // a finished cup rides the belt off-screen
+    const cy = beltTop - cupSize * 0.5;
+    pops.push({ x: brewX, y: cy, life: 1 });
+    addFloat('+' + pts, brewX, beltTop - cupSize - 12, '#c77d1a');
+    addParticles(brewX, cy, 38, 14);
+    sound('cup'); Arcade.audio.buzz(14);
+    updateHud();
+  }
+  function strike(){
+    strikes += 1; combo = 1; outTime = 0; mercyT = MERCY;
+    shake = 0.45; glow = 1;
+    vel = 0; needle = targetNow();     // recover onto the channel
+    addFloat(needle > 0.6 ? 'SCALDED!' : 'CHOKED!', orbX, zoneY(needle) - 22, '#ff5a4b');
+    addParticles(orbX, zoneY(needle), 8, 20, 220);
+    sound('strike'); Arcade.audio.buzz(32);
+    updateHud();
+    if (strikes >= STRIKES_MAX) gameOver();
+  }
+  function gameOver(){
+    state = 'over';
+    sound('over'); Arcade.audio.buzz(45);
+    const isBest = Math.floor(score) > best;
+    if (isBest){ best = Math.floor(score); localStorage.setItem('espressoBest', String(best)); }
+    updateHud();
+    let title = 'Ristretto…', emoji = '😵';
+    if (score >= 600){ title = 'Master Barista!'; emoji = '🤩'; }
+    else if (score >= 220){ title = 'Nice pull!'; emoji = '😎'; }
+    Arcade.gameOver({ score: Math.floor(score), isBest: isBest, title: title, emoji: emoji });
+  }
+
+  // ---------- update ----------
+  function update(dt){
+    clock += dt;
+    if (shake > 0) shake = Math.max(0, shake - dt * 1.6);
+    if (glow > 0) glow = Math.max(0, glow - dt * 2);
+
+    if (state === 'playing'){
+      if (!firstHold){
+        // ready pose: the needle rests on the channel; nothing ramps or strikes
+        // until the first hold, so the run never opens with an instant death.
+        if (!pinned){ needle = targetNow(); vel = 0; }
+        inFlow = true;
+      } else {
+        played += dt;
+        const w0 = omega();                  // accumulate all phases -> the wave stays smooth & continuous
+        phaseA += w0 * 0.45 * dt;
+        phaseB += w0 * 1.1 * dt;
+        phaseC += w0 * 2.3 * dt;
+        if (mercyT > 0) mercyT = Math.max(0, mercyT - dt);
+
+        // needle physics: hold builds pressure, gravity bleeds it
+        if (!pinned){
+          if (held) vel += RISE * dt;
+          vel -= bleed() * dt;
+          vel *= (1 - DAMP * dt);
+          vel = clamp(vel, -VMAX, VMAX);
+          needle += vel * dt;
+          if (needle <= 0){ needle = 0; vel = 0; }
+          if (needle >= 1){ needle = 1; vel = 0; }
+        }
+
+        // in the green -> extract; out -> lose grip, then strike
+        inFlow = isIn();
+        if (inFlow){
+          outTime = Math.max(0, outTime - dt * 3);
+          fill += dt / cupTime();
+          if (held) addParticles(orbX + 6, zoneY(needle), 34, 1, 40);
+          scrape();
+          if (fill >= 1) completeCup();
+        } else {
+          combo = 1;                            // leaving the green drops the streak at once
+          if (mercyT <= 0){
+            outTime += dt;
+            if (outTime >= grace()) strike();
+          }
+        }
+      }
+
+      // steam from the brewing cup
+      if (Math.random() < dt * 12){
+        steam.push({ x: brewX + (Math.random() * 2 - 1) * cupSize * 0.3, y: beltTop - cupSize, vy: -22 - Math.random() * 16, sway: Math.random() * 6, life: 1, r: 3 + Math.random() * 4 });
+      }
+    }
+
+    for (const p of particles){ p.vy += 360 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt * 1.6; }
+    particles = particles.filter((p) => p.life > 0);
+    for (const f of floats){ f.y -= dt * 42; f.life -= dt * 0.9; }
+    floats = floats.filter((f) => f.life > 0);
+    for (const s of steam){ s.y += s.vy * dt; s.x += Math.sin(clock * 2 + s.sway) * 8 * dt; s.life -= dt * 0.7; }
+    steam = steam.filter((s) => s.life > 0);
+    for (const q of pops){ q.life -= dt * 1.6; }
+    pops = pops.filter((q) => q.life > 0);
+    for (const c of belt){ c.x += W * 0.42 * dt; }        // finished cups ride the belt away
+    belt = belt.filter((c) => c.x - cupSize < W + 30);
+  }
+
+  // ---------- render ----------
+  const SAMP = 9;    // px between channel samples (finer = smoother curve)
+  function render(){
+    // warm café backdrop (light — so the shell HUD & cards stay readable)
+    const bg = ctx.createLinearGradient(0, 0, 0, H);
+    bg.addColorStop(0, '#f6e9d6'); bg.addColorStop(1, '#e0be8c');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    ctx.fillStyle = 'rgba(120,80,45,.12)';
+    ctx.fillRect(0, zoneTop + zoneH, W, H - (zoneTop + zoneH));
+
+    const sx = shake > 0 ? (Math.random() * 2 - 1) * shake * 7 : 0;
+    const sy = shake > 0 ? (Math.random() * 2 - 1) * shake * 5 : 0;
+    ctx.save();
+    ctx.translate(sx, sy);
+
+    // ---- pressure gauge zone ----
+    const zB = zoneTop + zoneH;
+    // steel body of the gauge
+    ctx.fillStyle = '#0e0906';
+    ctx.fillRect(-8, zoneTop, W + 16, zoneH);
+    // scream-red (top) & sputter-red (bottom) danger gradients
+    const topRed = ctx.createLinearGradient(0, zoneTop, 0, zoneTop + zoneH * 0.5);
+    topRed.addColorStop(0, 'rgba(200,50,35,.5)'); topRed.addColorStop(1, 'rgba(200,50,35,0)');
+    ctx.fillStyle = topRed; ctx.fillRect(-8, zoneTop, W + 16, zoneH * 0.5);
+    const botRed = ctx.createLinearGradient(0, zB, 0, zB - zoneH * 0.5);
+    botRed.addColorStop(0, 'rgba(150,90,30,.5)'); botRed.addColorStop(1, 'rgba(150,90,30,0)');
+    ctx.fillStyle = botRed; ctx.fillRect(-8, zB - zoneH * 0.5, W + 16, zoneH * 0.5);
+
+    // scrolling time lines (motion)
+    ctx.strokeStyle = 'rgba(255,255,255,.05)'; ctx.lineWidth = 1;
+    const scrollPx = SCROLL * W;
+    const phase = (played * scrollPx) % 48;
+    for (let x = -phase; x < W; x += 48){
+      ctx.beginPath(); ctx.moveTo(x, zoneTop); ctx.lineTo(x, zB); ctx.stroke();
+    }
+
+    // left-edge pressure scale (in 'bar')
+    ctx.save();
+    ctx.textAlign = 'left'; ctx.font = '700 11px ui-rounded, "SF Pro Rounded", Nunito, system-ui, sans-serif';
+    for (let bar = 0; bar <= 10; bar += 2){
+      const v = bar / 10, y = zoneY(v);
+      ctx.strokeStyle = 'rgba(255,255,255,.16)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(2, y); ctx.lineTo(14, y); ctx.stroke();
+      ctx.fillStyle = 'rgba(245,228,200,.6)'; ctx.fillText(bar + ' bar', 4, y - 3);
+    }
+    ctx.restore();
+
+    // ---- the green extraction channel (scrolls in from the right) ----
+    const ch = chanHalf();
+    const N = Math.max(2, Math.ceil(W / SAMP));   // sample x from exactly 0..W so the left/right edges are vertical
+    ctx.beginPath();
+    for (let i = 0; i <= N; i++){
+      const x = (i / N) * W;
+      ctx.lineTo(x, zoneY(chanAt((x - orbX) / scrollPx) + ch));
+    }
+    for (let i = N; i >= 0; i--){
+      const x = (i / N) * W;
+      ctx.lineTo(x, zoneY(chanAt((x - orbX) / scrollPx) - ch));
+    }
+    ctx.closePath();
+    const near = inFlow || state !== 'playing';
+    ctx.fillStyle = near ? 'rgba(55,209,122,.30)' : 'rgba(55,209,122,.16)';
+    ctx.fill();
+    ctx.lineWidth = 3; ctx.strokeStyle = near ? 'rgba(120,255,175,.9)' : 'rgba(55,209,122,.55)';
+    ctx.stroke();
+
+    // ---- the pressure orb (needle head) at the "now" line ----
+    const oy = zoneY(needle);
+    // guide line
+    ctx.strokeStyle = 'rgba(255,255,255,.10)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(orbX, zoneTop); ctx.lineTo(orbX, zB); ctx.stroke();
+    // thrust flame while holding
+    if (held && state === 'playing'){
+      const fg = ctx.createLinearGradient(0, oy, 0, oy + 34);
+      fg.addColorStop(0, 'rgba(255,180,60,.8)'); fg.addColorStop(1, 'rgba(255,80,40,0)');
+      ctx.fillStyle = fg;
+      ctx.beginPath(); ctx.moveTo(orbX - 7, oy); ctx.lineTo(orbX + 7, oy);
+      ctx.lineTo(orbX, oy + 26 + Math.random() * 10); ctx.closePath(); ctx.fill();
+    }
+    ctx.save();
+    ctx.shadowColor = inFlow ? 'rgba(90,255,160,.9)' : 'rgba(255,90,60,.9)';
+    ctx.shadowBlur = 16;
+    const og = ctx.createRadialGradient(orbX - 3, oy - 3, 1, orbX, oy, 13);
+    og.addColorStop(0, '#ffe9c4'); og.addColorStop(0.5, '#c98a4e'); og.addColorStop(1, '#7a4a24');
+    ctx.fillStyle = og;
+    ctx.beginPath(); ctx.arc(orbX, oy, 12, 0, 7); ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = inFlow ? 'rgba(180,255,210,.9)' : 'rgba(255,150,120,.9)';
+    ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(orbX, oy, 12, 0, 7); ctx.stroke();
+
+    // gauge frame
+    ctx.strokeStyle = 'rgba(210,190,160,.35)'; ctx.lineWidth = 3;
+    ctx.strokeRect(-8, zoneTop, W + 16, zoneH);
+
+    // ---- conveyor belt of finished cups ----
+    const beltH = Math.min(22, (H - zB) * 0.16);
+    ctx.fillStyle = '#2e2114';
+    ctx.fillRect(0, beltTop, W, beltH + 10);
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, beltTop, W, beltH + 10); ctx.clip();
+    ctx.strokeStyle = 'rgba(255,255,255,.07)'; ctx.lineWidth = 5;
+    const bstripe = (played * W * 0.42) % 30;
+    for (let x = -bstripe; x < W + 30; x += 30){
+      ctx.beginPath(); ctx.moveTo(x, beltTop); ctx.lineTo(x - 16, beltTop + beltH + 10); ctx.stroke();
+    }
+    ctx.restore();
+    ctx.fillStyle = '#6b5238';
+    ctx.beginPath(); ctx.arc(12, beltTop + (beltH + 10) / 2, (beltH + 10) / 2, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(W - 12, beltTop + (beltH + 10) / 2, (beltH + 10) / 2, 0, 7); ctx.fill();
+
+    // finished cups riding off-screen
+    for (const c of belt){ drawCup(c.x, beltTop - cupSize, cupSize, 1); }
+
+    // espresso stream + the cup currently brewing
+    if (inFlow && state === 'playing'){
+      ctx.strokeStyle = 'rgba(90,50,25,.85)'; ctx.lineWidth = 4;
+      ctx.beginPath(); ctx.moveTo(brewX, zB); ctx.lineTo(brewX + Math.sin(clock * 20) * 2, beltTop - cupSize); ctx.stroke();
+    }
+    drawCup(brewX, beltTop - cupSize, cupSize, fill);
+
+    // completion pops
+    for (const q of pops){
+      ctx.globalAlpha = clamp(q.life, 0, 1);
+      ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(q.x, q.y, (1 - q.life) * cupSize * 0.9 + 6, 0, 7); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // steam
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const s of steam){
+      ctx.globalAlpha = clamp(s.life, 0, 1) * 0.26;
+      ctx.fillStyle = 'rgba(255,250,240,1)';
+      ctx.beginPath(); ctx.arc(s.x, s.y, s.r, 0, 7); ctx.fill();
+    }
+    // spark particles
+    for (const p of particles){
+      ctx.globalAlpha = clamp(p.life, 0, 1);
+      ctx.fillStyle = 'hsl(' + p.hue + ',85%,62%)';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3 * p.life + 0.6, 0, 7); ctx.fill();
+    }
+    ctx.restore();
+
+    // combo readout
+    if (state === 'playing' && combo >= 2){
+      ctx.save();
+      ctx.textAlign = 'center';
+      const cs = 1 + Math.min(combo, 12) * 0.03 + Math.sin(clock * 9) * 0.03;
+      ctx.translate(W * 0.8, zoneTop + 26); ctx.scale(cs, cs);   // top-right, inside the dark gauge — clear of the HUD & orb
+      ctx.font = '800 22px ui-rounded, "SF Pro Rounded", Nunito, system-ui, sans-serif';
+      ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(0,0,0,.55)';
+      ctx.strokeText('x' + combo, 0, 0);
+      ctx.fillStyle = '#4ee08a'; ctx.fillText('x' + combo, 0, 0);
+      ctx.restore();
+    }
+
+    // floats
+    for (const f of floats){
+      ctx.save();
+      ctx.globalAlpha = clamp(f.life, 0, 1);
+      const scale = 1 + 0.2 * clamp(f.life, 0, 1);
+      ctx.translate(f.x, f.y); ctx.scale(scale, scale);
+      ctx.font = '800 18px ui-rounded, "SF Pro Rounded", Nunito, system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(255,255,255,.85)';
+      ctx.strokeText(f.text, 0, 0);
+      ctx.fillStyle = f.color; ctx.fillText(f.text, 0, 0);
+      ctx.restore();
+    }
+
+    ctx.restore();
+
+    // danger vignette (red flash on strike / when losing grip)
+    const dg = state === 'playing' ? Math.max(glow, outTime > 0 ? clamp(outTime / grace(), 0, 1) * 0.6 : 0) : glow;
+    if (dg > 0.01){
+      ctx.save();
+      ctx.globalAlpha = clamp(dg, 0, 1) * 0.5;
+      const vg = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.3, W / 2, H / 2, Math.max(W, H) * 0.7);
+      vg.addColorStop(0, 'rgba(255,40,30,0)'); vg.addColorStop(1, 'rgba(255,40,30,1)');
+      ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+    }
+  }
+
+  // ---------- loop ----------
+  let last = 0;
+  function loop(ts){
+    if (!last) last = ts;
+    let dt = (ts - last) / 1000; last = ts;
+    if (dt > 0.05) dt = 0.05;
+    try { update(dt); render(); }
+    catch (err){ if (window.console) console.error('[espresso] frame error', err); }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // ---------- input (hold to build pressure) ----------
+  function beginHold(){
+    if (state !== 'playing') return;
+    held = true;
+    if (!firstHold){ firstHold = true; Arcade.hideHint(); }
+  }
+  canvas.addEventListener('pointerdown', (e) => {
+    if (holdId !== null) return;
+    e.preventDefault();
+    Arcade.audio.resume();
+    if (state !== 'playing') return;   // don't claim the pointer on the menu/over card (avoids a stale holdId)
+    holdId = e.pointerId;
+    if (canvas.setPointerCapture){ try { canvas.setPointerCapture(e.pointerId); } catch (err){} }
+    beginHold();
+  }, { passive: false });
+  function endHold(e){
+    if (holdId === null || (e && e.pointerId !== holdId)) return;
+    if (e && e.preventDefault) e.preventDefault();
+    holdId = null;
+    held = false;
+  }
+  canvas.addEventListener('pointerup', endHold, { passive: false });
+  canvas.addEventListener('pointercancel', endHold, { passive: false });
+
+  window.addEventListener('keydown', (e) => {
+    if (Arcade.isTyping(e)) return;
+    if (e.code !== 'Space' && e.code !== 'Enter') return;
+    e.preventDefault();
+    if (e.repeat) return;
+    Arcade.audio.resume();
+    if (state === 'playing'){ beginHold(); return; }
+    if (Arcade.overlayVisible()){ Arcade.play(); beginHold(); }   // the held key starts building at once
+  });
+  window.addEventListener('keyup', (e) => {
+    if (Arcade.isTyping(e)) return;
+    if ((e.code === 'Space' || e.code === 'Enter') && state === 'playing') held = false;
+  });
+
+  updateHud();
+
+  // --- test seam: exposed only to the jsc suite, inert in the browser ---
+  if (typeof window !== 'undefined' && window.__ESPRESSO_TEST__){
+    window.__ESPRESSO_TEST__.api = {
+      roundRect,
+      start: () => Arcade.play(),
+      state: () => state,
+      score: () => Math.floor(score),
+      combo: () => combo,
+      strikes: () => strikes,
+      served: () => served,
+      played: () => played,
+      needle: () => needle,
+      inFlow: () => inFlow,
+      outTime: () => outTime,
+      fill: () => fill,
+      chanHalf: () => chanHalf(),
+      grace: () => grace(),
+      chanAt: (d) => chanAt(d),
+      targetNow: () => targetNow(),
+      isIn: () => isIn(),
+      begin: () => beginHold(),
+      hold: (b) => { held = !!b; },
+      pin: (b) => { pinned = !!b; },
+      setNeedle: (v) => { needle = clamp(v, 0, 1); },
+      tick: (dt) => update(dt)
+    };
+  }
+})();
+</script>
+</body>
+</html>
