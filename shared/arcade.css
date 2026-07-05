@@ -3,7 +3,8 @@
    --ink, --ink-soft, --accent, --bg0, --bg1, --btn0, --btn1,
    --btn-shadow-rgb, --row-tint, --row-me, --shade-rgb, --hint-top. */
 
-*{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+*{ box-sizing:border-box; -webkit-tap-highlight-color:transparent;
+   -webkit-touch-callout:none; -webkit-user-select:none; user-select:none; }
 html,body{
   margin:0; height:100%;
   overscroll-behavior:none; touch-action:manipulation;

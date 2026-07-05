@@ -131,7 +131,8 @@ api.pin(true);
 var prevT = api.targetNow(), prevSlope = 0;
 var maxSlope = 0, maxStep = 0, maxCurv = 0, loT = 1, hiT = 0, clamps = false;
 var wdt = 0.05;
-for (var wi = 0; wi < 900 && api.state() === 'playing'; wi++){   // ~45s across the difficulty ramp
+var slopeEarly = 0, slopeLate = 0;
+for (var wi = 0; wi < 2400 && api.state() === 'playing'; wi++){  // ~120s across the difficulty ramp
   api.setNeedle(api.targetNow());                                // stay in the green so the run doesn't end
   api.tick(wdt);
   var t = api.targetNow(), ch = api.chanHalf();
@@ -141,14 +142,18 @@ for (var wi = 0; wi < 900 && api.state() === 'playing'; wi++){   // ~45s across 
   maxCurv = Math.max(maxCurv, Math.abs(slope - prevSlope));
   loT = Math.min(loT, t); hiT = Math.max(hiT, t);
   if (t + ch > 1.0001 || t - ch < -0.0001 || t < 0.02 || t > 0.98) clamps = true;
+  if (wi < 300) slopeEarly = Math.max(slopeEarly, slope);        // first ~15s
+  if (wi >= 1800) slopeLate = Math.max(slopeLate, slope);        // after ~90s
   prevT = t; prevSlope = slope;
 }
 eq(api.state(), 'playing', 'wave run stayed alive (in the green throughout)');
-ok(maxSlope >= 0.25, 'steep sweeps are present (max slope ' + maxSlope.toFixed(3) + ' u/s)');
+ok(maxSlope >= 0.45, 'steep sweeps are present (max slope ' + maxSlope.toFixed(3) + ' u/s)');
+ok(slopeLate > slopeEarly * 1.8, 'difficulty ramps: late sweeps far steeper than early (' +
+   slopeEarly.toFixed(3) + ' -> ' + slopeLate.toFixed(3) + ')');
 ok(hiT - loT >= 0.45, 'sweeps cover a wide vertical range (' + (hiT - loT).toFixed(2) + ')');
 ok(!clamps, 'the wave never clamps or pins the band (no hard corners)');
 ok(maxStep <= 0.06, 'continuous — no per-frame jump (max step ' + maxStep.toFixed(4) + ')');
-ok(maxCurv <= 0.12, 'smooth — slope never jumps sharply (max ' + maxCurv.toFixed(4) + ')');
+ok(maxCurv <= 0.20, 'smooth — slope never jumps sharply (max ' + maxCurv.toFixed(4) + ')');
 ok(maxSlope <= 1.15, 'wave stays reachable by the needle (VMAX 1.15)');
 
 print('\n' + (FAIL === 0 ? '✅ ' : '❌ ') + PASS + ' passed, ' + FAIL + ' failed');

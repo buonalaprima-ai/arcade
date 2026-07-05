@@ -94,7 +94,7 @@
     zoneTop = H * 0.15; zoneH = H * 0.56;
     orbX = W * ORBX;
     const zbb = zoneTop + zoneH;
-    brewX = W * 0.28;                           // where the current cup brews
+    brewX = orbX;                               // brew cup sits right under the orb's vertical line
     cupSize = Math.min(W * 0.15, 56);
     beltTop = zbb + (H - zbb) * 0.5;            // conveyor-belt surface (cups' base)
   }
@@ -231,7 +231,7 @@
   // ---------- difficulty & channel ----------
   function diffNow(){ return played * 0.055; }                   // smooth time-based ramp — a bit quicker now
   function chanHalf(){ return clamp(0.21 - diffNow() * 0.07, 0.06, 0.21); }   // starts WIDE, narrows quicker
-  function omega(){ return 0.85 + diffNow() * 0.08; }            // wave speed -> steeper sweeps, grows with difficulty
+  function omega(){ return Math.min(2.6, 0.8 + diffNow() * 0.16); }   // wave speed -> steeper/denser; ramps hard, capped so it stays followable
   function bleed(){ return clamp(BLEED0 + diffNow() * 0.10, BLEED0, 3.0); }
   function grace(){ return clamp(0.34 - diffNow() * 0.015, 0.16, 0.34); }
   function cupTime(){ return clamp(CUP0 - diffNow() * 0.08, 1.3, CUP0); }
