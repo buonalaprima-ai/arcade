@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#F3E3CB">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Fork It! 🍴</title>
+<link rel="stylesheet" href="../shared/arcade.css">
+<style>
+  :root{
+    --ink:#4a2f1c;
+    --ink-soft:#8c6b4f;
+    --accent:#c9962f;
+    --bg0:#f4e6cf;
+    --bg1:#e3c393;
+    --btn0:#d8a83e;
+    --btn1:#b07f28;
+    --btn-shadow-rgb:176,127,40;
+    --row-tint:rgba(150,110,70,.12);
+    --row-me:rgba(201,150,47,.24);
+    --shade-rgb:120,80,45;
+    --hint-top:60%;
+  }
+  #hint{ color:#fff6e2; text-shadow:0 1px 4px rgba(0,0,0,.6); }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+</div>
+
+<script src="../shared/leaderboard.js"></script>
+<script src="../shared/arcade.js"></script>
+<script>
+(() => {
+  "use strict";
+
+  // ---------- tuning ----------
+  const DURATION = 90;            // seconds — time attack
+  const SEATS_PER_TABLE = 4;
+  const KINDS = ['fork', 'knife', 'spoon'];
+  const MAXMULT = 8;
+  const HITSTOP = 0.07;           // s the clock freezes on a great stop
+  const HITSTOP_BUDGET = 4.0;     // s of freeze allowed per run
+  const LASTCALL = 10;            // s remaining when Last Call kicks in
+
+  // ---------- venues (diner -> bistro -> fine dining) ----------
+  const VENUES = [
+    { name: 'DINER',       cloth: '#dfe4ea', cloth2: '#c4ccd4', mat: '#eef2f6', wall: '#f6ece0', wall2: '#e7d3b6', plate: '#f4f6f8', ring: '#c4ccd4', metal: '#b7bec8', metalEdge: '#586372', key: 0 },
+    { name: 'BISTRO',      cloth: '#c8402f', cloth2: '#9c2c22', mat: '#ecdcc0', wall: '#f2e2c6', wall2: '#d9b585', plate: '#fffaf0', ring: '#e7d9be', metal: '#d9dde3', metalEdge: '#8a919c', key: 5 },
+    { name: 'FINE DINING', cloth: '#243a2e', cloth2: '#16261d', mat: '#37503f', wall: '#efe0c4', wall2: '#caa774', plate: '#fffdf6', ring: '#efe2c4', metal: '#e8c66a', metalEdge: '#a97f28', key: 7 }
+  ];
+  function venueOf(seat){ return VENUES[Math.min(VENUES.length - 1, Math.floor(seat / SEATS_PER_TABLE))]; }
+
+  // ---------- state ----------
+  let state = 'menu';            // 'menu' | 'playing' | 'seatdone' | 'over'
+  let timeLeft = DURATION, freezeLeft = 0, freezeBudget = HITSTOP_BUDGET;
+  let score = 0, mult = 1, seatIndex = 0, activeIndex = 0;
+  let best = parseInt(localStorage.getItem('forkItBest') || '0', 10) || 0;
+  let active = null;             // the spinning utensil {kind, angle, omega, dir, spoon}
+  let placed = [];               // utensils placed in the CURRENT seat (flying/settled)
+  let seats = [];                // completed seats: {utensils:[{kind,angle,tier}], venue}
+  let lastTier = '';
+  let camX = 0, camTarget = 0;
+  let clock = 0, shake = 0, firstTap = false, lastRafTs = 0;
+  let particles = [], floats = [], sparks = [];
+  let fanfareT = 0, lastCall = false, seatPts = 0, seatDoneT = 0;
+
+  // ---------- shell ----------
+  Arcade.init({
+    gameId: 'fork-it',
+    emoji: '🍴',
+    emojiAnim: 'bob',
+    title: 'Fork It!',
+    subtitle: 'A utensil spins on the plate — TAP to stop it dead&nbsp;straight.<br>Set fork, knife &amp; spoon, then the next seat. Best table in 90s&nbsp;wins.',
+    hint: 'tap to stop it straight',
+    onPlay: startRun,
+    isPlaying: () => state === 'playing' || state === 'seatdone'
+  });
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const wrap = document.getElementById('app');
+
+  let W = 0, H = 0, plateR = 0, seatCY = 0, SEAT_SPACING = 0, slotGap = 0, uLen = 0, timeBarY = 0;
+  function resize(){
+    const rect = wrap.getBoundingClientRect();
+    W = rect.width; H = rect.height;
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    plateR = Math.min(W * 0.26, H * 0.17, 130);
+    seatCY = H * 0.56;
+    SEAT_SPACING = W;              // one seat per screen width
+    slotGap = plateR * 0.62;
+    uLen = plateR * 1.5;
+    timeBarY = Math.max(104, H * 0.14);   // clear the centered HUD score/best band (incl. notch safe-area)
+  }
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+  resize();
+
+  // screen x of a seat given the camera
+  function seatScreenX(i){ return W / 2 + i * SEAT_SPACING - camX; }
+
+  // ---------- helpers ----------
+  function clamp(v, a, b){ return v < a ? a : (v > b ? b : v); }
+  function angNorm(a){ a = a % (Math.PI * 2); if (a > Math.PI) a -= Math.PI * 2; if (a < -Math.PI) a += Math.PI * 2; return a; }
+  function roundRect(x, y, w, h, r){
+    if (!(w > 0) || !(h > 0)){ ctx.beginPath(); return; }
+    r = Math.max(0, Math.min(r, w / 2, h / 2));
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  // draw a utensil centered at origin, head pointing UP (-y), along local Y
+  function drawUtensil(kind, len, color, edge){
+    const w = len * 0.14;
+    ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+    const g = ctx.createLinearGradient(-w, 0, w, 0);   // metallic sheen across the width
+    g.addColorStop(0, edge); g.addColorStop(0.34, color); g.addColorStop(0.5, '#ffffff');
+    g.addColorStop(0.66, color); g.addColorStop(1, edge);
+    ctx.fillStyle = g; ctx.strokeStyle = edge; ctx.lineWidth = Math.max(1, len * 0.016);
+    function taperedHandle(topY){                                       // shared tapered rounded handle
+      ctx.beginPath();
+      ctx.moveTo(-w * 0.5, topY); ctx.lineTo(-w * 0.42, len * 0.5);
+      ctx.quadraticCurveTo(0, len * 0.57, w * 0.42, len * 0.5);
+      ctx.lineTo(w * 0.5, topY); ctx.closePath(); ctx.fill(); ctx.stroke();
+    }
+    if (kind === 'fork'){
+      taperedHandle(-len * 0.06);
+      roundRect(-w * 0.62, -len * 0.22, w * 1.24, len * 0.2, w * 0.3); ctx.fill(); ctx.stroke();   // head base
+      for (let t = 0; t < 4; t++){                                                                  // 4 tines
+        const tx = (-1.5 + t) * w * 0.36;
+        roundRect(tx - w * 0.1, -len * 0.5, w * 0.2, len * 0.32, w * 0.1); ctx.fill(); ctx.stroke();
+      }
+    } else if (kind === 'knife'){
+      taperedHandle(len * 0.02);
+      ctx.beginPath();                                                                              // blade: straight spine, curved belly, tip
+      ctx.moveTo(-w * 0.36, len * 0.02);
+      ctx.lineTo(-w * 0.3, -len * 0.42);
+      ctx.quadraticCurveTo(-w * 0.08, -len * 0.52, w * 0.06, -len * 0.5);
+      ctx.quadraticCurveTo(w * 0.5, -len * 0.26, w * 0.36, len * 0.02);
+      ctx.closePath(); ctx.fill(); ctx.stroke();
+    } else {                                                                                        // spoon
+      taperedHandle(len * 0.04);
+      ctx.beginPath(); ctx.ellipse(0, -len * 0.28, w * 0.86, len * 0.25, 0, 0, 7); ctx.fill(); ctx.stroke();   // bowl
+      ctx.fillStyle = 'rgba(255,255,255,.4)';                                                       // inner sheen
+      ctx.beginPath(); ctx.ellipse(-w * 0.18, -len * 0.31, w * 0.42, len * 0.13, 0, 0, 7); ctx.fill();
+    }
+  }
+
+  // ---------- difficulty & grading ----------
+  function tableTier(){ return Math.min(VENUES.length - 1, Math.floor(seatIndex / SEATS_PER_TABLE)); }   // venue (capped)
+  function lerp(a, b, t){ return a + (b - a) * t; }
+  function elapsedFrac(){ return clamp((DURATION - timeLeft) / DURATION, 0, 1); }
+  // the green tightens with TIME: comfy at the start, near-straight-only by 0:00
+  function perfectBand(){ return lerp(0.13, 0.025, elapsedFrac()); }
+  function sharpBand(){ return lerp(0.34, 0.08, elapsedFrac()); }
+  function goodBand(){ return lerp(0.5, 0.22, elapsedFrac()); }
+  function seatBase(){ return clamp(3.7 + seatIndex * 0.34, 3.7, 9.5); }   // spin speed rises per seat (randomized per utensil on top)
+  function angleErr(){ return active ? Math.abs(angNorm(active.angle)) : Math.PI; }
+
+  // ---------- audio ----------
+  function clink(tier){
+    if (tier === 'sloppy'){                                 // dull "tok" — the only negative one (a real miss)
+      Arcade.audio.tone(175, 0.10, 'sawtooth', 0.10, 0);
+      Arcade.audio.tone(115, 0.12, 'square', 0.06, 0.02);
+      return;
+    }
+    // positive ding for good/sharp/perfect — brighter the better
+    const f = tier === 'perfect' ? 1180 : (tier === 'sharp' ? 940 : 720);
+    Arcade.audio.tone(f, 0.13, 'triangle', 0.15, 0);
+    Arcade.audio.tone(f * 1.5, 0.15, 'sine', 0.08, 0.015);
+  }
+  function fanfare(){
+    [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => Arcade.audio.tone(f, 0.16, 'triangle', 0.13, i * 0.06));
+  }
+  function whoosh(){ Arcade.audio.tone(300, 0.14, 'sine', 0.05, 0); Arcade.audio.tone(520, 0.12, 'sine', 0.04, 0.05); }
+  function overSound(){ Arcade.audio.tone(392, 0.5, 'triangle', 0.12, 0); Arcade.audio.tone(261, 0.6, 'sine', 0.1, 0.05); }
+
+  // ---------- music (bistro waltz, adaptive layers) ----------
+  const BPM = 156;
+  const secPerStep = 60 / BPM / 4;
+  const NOTE = {
+    C2:65.41, D2:73.42, E2:82.41, F2:87.31, G2:98.00, A2:110.00, B2:123.47,
+    C3:130.81, D3:146.83, E3:164.81, F3:174.61, G3:196.00, A3:220.00,
+    C4:261.63, D4:293.66, E4:329.63, F4:349.23, G4:392.00, A4:440.00, B4:493.88,
+    C5:523.25, D5:587.33, E5:659.25, F5:698.46, G5:783.99, A5:880.00
+  };
+  // 12 steps per bar (waltz: 3 beats x 4). oom on beat1, pah on beats 2&3.
+  const CH = { Am:['A2','C4','E4'], Dm:['D3','F4','A4'], E:['E2','GS4','B4'], F:['F2','A4','C5'], G:['G2','B4','D5'], C:['C3','E4','G4'] };
+  NOTE.GS4 = 415.30;
+  const PROG = ['Am', 'Dm', 'E', 'Am', 'F', 'G', 'E', 'E'];   // 8 bars
+  const MEL = [
+    [0,'A4',3],[3,'C5',3],[6,'E5',6],
+    [12,'D5',3],[15,'F4',3],[18,'A4',6],
+    [24,'GS4',3],[27,'B4',3],[30,'E5',6],
+    [36,'C5',3],[39,'A4',3],[42,'E4',6],
+    [48,'A4',3],[51,'C5',3],[54,'F5',6],
+    [60,'B4',3],[63,'D5',3],[66,'G5',6],
+    [72,'GS4',3],[75,'B4',3],[78,'E5',6],
+    [84,'B4',3],[87,'GS4',3],[90,'E4',6]
+  ];
+  const BAR = 12, STEPS = PROG.length * BAR;
+  const melAt = new Array(STEPS).fill(null);
+  MEL.forEach((n) => { melAt[n[0]] = { f: NOTE[n[1]], d: n[2] * secPerStep }; });
+  function semis(f, s){ return f * Math.pow(2, s / 12); }
+  Arcade.setSong({
+    secPerStep: secPerStep,
+    steps: STEPS,
+    volume: 0.42,
+    onStep(step, time, io){
+      const bar = Math.floor(step / BAR), inBar = step % BAR;
+      const chord = CH[PROG[bar]];
+      const key = (state === 'playing' || state === 'seatdone') ? venueOf(seatIndex).key : 0;
+      const hot = mult >= 2, hotter = mult >= 4, last = lastCall && state === 'playing';
+      // oom-pah-pah bass (always)
+      if (inBar === 0) io.note(semis(NOTE[chord[0]], key), time, 3.2 * secPerStep, 'triangle', 0.16);
+      if (inBar === 4 || inBar === 8){
+        io.note(semis(NOTE[chord[1]], key), time, 2.4 * secPerStep, 'triangle', 0.09);
+        io.note(semis(NOTE[chord[2]], key), time, 2.4 * secPerStep, 'triangle', 0.07);
+      }
+      // hats when the streak warms up
+      if (hot && inBar % 2 === 0) io.hat(time);
+      // melody when it's really cooking
+      if (hotter || last){
+        const m = melAt[step];
+        if (m && m.f) io.note(semis(m.f, key), time, m.d * 0.9, 'square', last ? 0.11 : 0.08);
+      }
+      // Last Call: extra offbeat drive
+      if (last && inBar % 2 === 1) io.hat(time);
+    }
+  });
+
+  // ---------- fx ----------
+  function burst(x, y, hue, n, spread){
+    for (let i = 0; i < n; i++){
+      const a = Math.random() * Math.PI * 2, sp = 40 + Math.random() * (spread || 160);
+      particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: 1, hue });
+    }
+  }
+  function sparkle(seat){ for (let i = 0; i < 8; i++){ sparks.push({ seat: seat, a: Math.random() * 7, r: plateR * 0.2 + Math.random() * plateR * 0.4, life: 1 }); } }
+  function addFloat(t, x, y, c){ floats.push({ t, x, y, life: 1, c: c || '#c9962f' }); }
+
+  // ---------- game flow ----------
+  function updateHud(){ Arcade.setScore(Math.floor(score)); Arcade.setBest(best); Arcade.setStrikes(''); }
+  function slotFor(kind){
+    if (kind === 'fork')  return { x: -plateR - slotGap, y: 0, base: 0 };
+    if (kind === 'knife') return { x:  plateR + slotGap, y: 0, base: 0 };
+    return { x: 0, y: -plateR - slotGap * 0.9, base: Math.PI / 2 };   // spoon above, horizontal
+  }
+  function spawnUtensil(i){
+    const kind = KINDS[i];
+    const omega = seatBase() * (0.7 + Math.random() * 0.95);   // varies a LOT per utensil -> can't memorize the timing
+    active = { kind: kind, angle: Math.random() * Math.PI * 2, omega: omega, dir: Math.random() < 0.5 ? 1 : -1 };
+  }
+  function reset(){
+    timeLeft = DURATION; freezeLeft = 0; freezeBudget = HITSTOP_BUDGET;
+    score = 0; mult = 1; seatIndex = 0; activeIndex = 0;
+    placed = []; seats = []; lastTier = ''; camX = 0; camTarget = 0;
+    particles = []; floats = []; sparks = []; fanfareT = 0; lastCall = false; seatPts = 0; seatDoneT = 0;
+    firstTap = false;
+    spawnUtensil(0);
+    updateHud();
+  }
+  function startRun(){ reset(); state = 'playing'; }
+
+  function tap(){
+    if (state !== 'playing' || !active) return;
+    if (!firstTap){ firstTap = true; Arcade.hideHint(); }
+    // sample the TRUE angle at the tap instant (sub-frame) so precision doesn't depend on frame rate
+    let ang = active.angle;
+    if (typeof performance !== 'undefined' && lastRafTs){
+      ang += active.dir * active.omega * clamp((performance.now() - lastRafTs) / 1000, 0, 0.033);
+    }
+    const err = Math.abs(angNorm(ang));
+    const pb = perfectBand(), sb = sharpBand();
+    let tier, pts;
+    if (err <= pb){ tier = 'perfect'; pts = 10; }
+    else if (err <= sb){ tier = 'sharp'; pts = 6; }
+    else if (err <= goodBand()){ tier = 'good'; pts = 2; }
+    else { tier = 'sloppy'; pts = 0; }   // a real miss is worth NOTHING -> mashing at random can't out-score careful play
+    lastTier = tier;
+    // combo multiplier
+    if (tier === 'perfect' || tier === 'sharp') mult = Math.min(mult + 1, MAXMULT);
+    else if (tier === 'sloppy') mult = 1;
+    // Last Call bonus, gated behind a live streak
+    const lc = (lastCall && mult >= 3) ? 1.5 : 1;
+    const gained = Math.round(pts * mult * lc);
+    score += gained; seatPts += gained;
+
+    const sx = seatScreenX(seatIndex), sy = seatCY;
+    placed.push({ kind: active.kind, angle: ang, tier: tier, animT: 0, wob: (tier === 'perfect' ? 0 : (Math.random() * 2 - 1) * 0.5) });
+    // feedback keyed to the stop
+    clink(tier); Arcade.audio.buzz(tier === 'perfect' ? 22 : tier === 'sharp' ? 12 : tier === 'good' ? 6 : 0);
+    const label = { perfect: 'PERFECT!', sharp: 'SHARP', good: 'nice', sloppy: 'oops' }[tier];
+    const col = { perfect: '#f4c542', sharp: '#7ad17a', good: '#c9b06a', sloppy: '#c98a6a' }[tier];
+    addFloat(label + (mult > 1 ? '  x' + mult : ''), sx, sy - plateR - 8, col);
+    if (tier === 'perfect' || tier === 'sharp'){
+      sparkle(seatIndex); burst(sx, sy, tier === 'perfect' ? 45 : 120, tier === 'perfect' ? 16 : 8);
+      if (freezeBudget > 0){ const f = Math.min(HITSTOP, freezeBudget); freezeLeft = f; freezeBudget -= f; }
+    } else if (tier === 'sloppy'){ shake = 0.28; }
+
+    active = null;
+    activeIndex++;
+    if (activeIndex >= KINDS.length) completeSeat();
+    else spawnUtensil(activeIndex);
+    updateHud();
+  }
+
+  function completeSeat(){
+    seats.push({ utensils: placed.map((p) => ({ kind: p.kind, angle: p.angle, tier: p.tier })), venue: venueOf(seatIndex), pts: seatPts, lit: true });
+    seatIndex++;
+    activeIndex = 0;
+    placed = [];
+    active = null;
+    // pause on the just-set place so the player can SEE it before moving on (timer paused during this beat)
+    state = 'seatdone'; seatDoneT = 0;
+    camTarget = (seatIndex - 1) * SEAT_SPACING;
+    if (seatIndex % SEATS_PER_TABLE === 0){ fanfareT = 1; fanfare(); Arcade.audio.buzz(30); }
+    else { Arcade.audio.tone(760, 0.09, 'triangle', 0.07, 0); }
+  }
+  function continueSeat(){
+    if (state !== 'seatdone') return;
+    state = 'playing'; seatDoneT = 0; seatPts = 0;
+    camTarget = seatIndex * SEAT_SPACING;
+    whoosh();
+    spawnUtensil(0);
+  }
+
+  function gameOver(){
+    state = 'over';
+    overSound(); Arcade.audio.buzz(30);
+    const s = Math.floor(score);
+    const isBest = s > best;
+    if (isBest){ best = s; localStorage.setItem('forkItBest', String(best)); }
+    updateHud();
+    let title = 'Table set!', emoji = '🍽️';
+    if (s >= 900){ title = 'Maître d’!'; emoji = '🤩'; }
+    else if (s >= 400){ title = 'Fine service!'; emoji = '😎'; }
+    Arcade.gameOver({ score: s, isBest: isBest, title: title, emoji: emoji });
+  }
+
+  // ---------- update ----------
+  function update(dt){
+    clock += dt;
+    if (shake > 0) shake = Math.max(0, shake - dt * 1.8);
+    if (fanfareT > 0) fanfareT = Math.max(0, fanfareT - dt * 1.2);
+    camX += (camTarget - camX) * Math.min(1, dt * 6);
+
+    if (state === 'playing'){
+      if (freezeLeft > 0){ freezeLeft = Math.max(0, freezeLeft - dt); }
+      else {
+        timeLeft -= dt;
+        if (!lastCall && timeLeft <= LASTCALL){ lastCall = true; addFloat('LAST CALL!', W / 2, H * 0.3, '#ff5a4b'); }
+        if (timeLeft <= 0){ timeLeft = 0; gameOver(); }
+      }
+      if (active && freezeLeft <= 0){
+        active.angle += active.dir * active.omega * dt;   // constant spin; fairness comes from sampling the true angle at tap-time
+      }
+    } else if (state === 'seatdone'){
+      seatDoneT += dt;                                     // timer paused; auto-continue if the player just admires
+      if (seatDoneT > 1.8) continueSeat();
+    }
+
+    for (const p of particles){ p.vy += 320 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt * 1.5; }
+    particles = particles.filter((p) => p.life > 0);
+    for (const f of floats){ f.y -= dt * 40; f.life -= dt * 0.85; }
+    floats = floats.filter((f) => f.life > 0);
+    for (const s of sparks){ s.life -= dt * 1.8; }
+    sparks = sparks.filter((s) => s.life > 0);
+    if (freezeLeft <= 0){ for (const p of placed){ if (p.animT < 1) p.animT = Math.min(1, p.animT + dt * 4.5); } }
+  }
+
+  // ---------- render ----------
+  function easeOut(t){ return 1 - (1 - t) * (1 - t); }
+  function drawGlass(x, y, r, v){
+    ctx.fillStyle = 'rgba(180,210,230,.35)';
+    ctx.beginPath(); ctx.ellipse(x, y, r * 0.5, r * 0.62, 0, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.fillStyle = 'rgba(150,190,215,.4)';
+    ctx.beginPath(); ctx.ellipse(x, y + r * 0.12, r * 0.42, r * 0.4, 0, 0, 7); ctx.fill();
+  }
+  function drawSeat(cx, v, utensils, activeSpin, litCandle){
+    // placemat under the setting
+    ctx.fillStyle = v.mat;
+    roundRect(cx - plateR * 1.78, seatCY - plateR * 0.82, plateR * 3.56, plateR * 1.64, plateR * 0.16);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.09)'; ctx.lineWidth = 2; ctx.stroke();
+    // plate
+    ctx.fillStyle = 'rgba(0,0,0,.14)';
+    ctx.beginPath(); ctx.ellipse(cx, seatCY + plateR * 0.16, plateR * 1.02, plateR * 0.4, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = v.plate;
+    ctx.beginPath(); ctx.arc(cx, seatCY, plateR, 0, 7); ctx.fill();
+    ctx.strokeStyle = v.ring; ctx.lineWidth = plateR * 0.09;
+    ctx.beginPath(); ctx.arc(cx, seatCY, plateR * 0.7, 0, 7); ctx.stroke();
+    ctx.strokeStyle = 'rgba(0,0,0,.08)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, seatCY, plateR, 0, 7); ctx.stroke();
+    // glass (top-right)
+    drawGlass(cx + plateR * 1.15, seatCY - plateR * 0.9, plateR * 0.5, v);
+    // candle for the reveal
+    if (litCandle){
+      ctx.fillStyle = '#f3e7c8'; roundRect(cx - plateR * 1.3 - 3, seatCY - plateR * 0.5, 6, plateR * 0.5, 3); ctx.fill();
+      const fl = 0.6 + Math.sin(clock * 12 + cx) * 0.2;
+      ctx.fillStyle = 'rgba(255,180,60,' + fl + ')';
+      ctx.beginPath(); ctx.ellipse(cx - plateR * 1.3, seatCY - plateR * 0.5 - 6, 4, 8, 0, 0, 7); ctx.fill();
+    }
+    // placed / final utensils
+    for (const u of utensils){
+      const slot = slotFor(u.kind);
+      const t = u.animT === undefined ? 1 : easeOut(u.animT);
+      const px = cx + slot.x * t, py = seatCY + slot.y * t;
+      const wob = (u.animT !== undefined && u.animT < 1) ? Math.sin(u.animT * 22) * (1 - u.animT) * 0.25 : 0;
+      const ang = u.angle + slot.base * t + (u.wob || 0) * (1 - (u.animT === undefined ? 1 : u.animT)) + wob;
+      ctx.save(); ctx.translate(px, py); ctx.rotate(ang);
+      drawUtensil(u.kind, uLen, v.metal, v.metalEdge);
+      ctx.restore();
+    }
+    // active spinner + 12 o'clock beam + perfect wedge
+    if (activeSpin && active){
+      const pb = perfectBand(), sb = sharpBand();
+      ctx.save(); ctx.translate(cx, seatCY);
+      const wr = plateR + slotGap * 1.1;
+      // STATIC reference only — marks WHERE vertical is. No proximity glow (that would auto-tell the
+      // exact moment; the player must judge the utensil's own angle against it).
+      ctx.fillStyle = 'rgba(120,200,120,.16)';        // sharp zone
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, wr, -Math.PI / 2 - sb, -Math.PI / 2 + sb); ctx.closePath(); ctx.fill();
+      ctx.fillStyle = 'rgba(70,210,110,.34)';         // perfect core
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.arc(0, 0, wr, -Math.PI / 2 - pb, -Math.PI / 2 + pb); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(196,144,40,.6)'; ctx.lineWidth = 2.5;   // 12 o'clock beam
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -wr); ctx.stroke();
+      ctx.fillStyle = '#e0a91e';                       // gem
+      ctx.beginPath(); ctx.arc(0, -wr, 5, 0, 7); ctx.fill();
+      // the spinning utensil (soft shadow so it pops on light plates)
+      ctx.rotate(active.angle);
+      ctx.shadowColor = 'rgba(0,0,0,.3)'; ctx.shadowBlur = 7; ctx.shadowOffsetY = 2;
+      drawUtensil(active.kind, uLen, v.metal, v.metalEdge);
+      ctx.restore();
+    }
+  }
+
+  function render(){
+    const centerSeat = state === 'seatdone' ? Math.max(0, seatIndex - 1) : seatIndex;
+    const v = venueOf(centerSeat);
+    // wall (light top -> HUD stays readable) + table
+    const wall = ctx.createLinearGradient(0, 0, 0, H);
+    wall.addColorStop(0, v.wall); wall.addColorStop(1, v.wall2);
+    ctx.fillStyle = wall; ctx.fillRect(0, 0, W, H);
+    const tableTop = seatCY - plateR * 1.7;
+    const cloth = ctx.createLinearGradient(0, tableTop, 0, H);
+    cloth.addColorStop(0, v.cloth); cloth.addColorStop(1, v.cloth2);
+    ctx.fillStyle = cloth; ctx.fillRect(0, tableTop, W, H - tableTop);
+    ctx.strokeStyle = 'rgba(255,255,255,.045)'; ctx.lineWidth = 1;              // faint woven texture
+    for (let ty = tableTop + 6; ty < H; ty += 9){ ctx.beginPath(); ctx.moveTo(0, ty); ctx.lineTo(W, ty); ctx.stroke(); }
+    const lipH = plateR * 0.42, sc = Math.max(18, W / 16);                      // draped front lip + scalloped hem
+    ctx.fillStyle = 'rgba(255,255,255,.12)'; ctx.fillRect(0, tableTop, W, lipH);
+    ctx.fillStyle = v.cloth;
+    ctx.beginPath(); ctx.moveTo(0, tableTop + lipH);
+    for (let x = 0; x < W + sc; x += sc){ ctx.arc(x + sc / 2, tableTop + lipH, sc / 2, Math.PI, 0, false); }
+    ctx.lineTo(W, tableTop + lipH + sc); ctx.lineTo(0, tableTop + lipH + sc); ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = 'rgba(0,0,0,.14)'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(0, tableTop); ctx.lineTo(W, tableTop); ctx.stroke();
+
+    const sx = shake > 0 ? (Math.random() * 2 - 1) * shake * 8 : 0;
+    ctx.save(); ctx.translate(sx, 0);
+
+    // seats near the camera
+    for (let i = Math.max(0, centerSeat - 1); i <= centerSeat + 1; i++){
+      const cx = seatScreenX(i);
+      if (cx < -W * 0.6 || cx > W * 1.6) continue;
+      if (i < seats.length){
+        drawSeat(cx, seats[i].venue, seats[i].utensils, false, seats[i].lit);
+      } else if (i === seatIndex && state === 'playing'){
+        drawSeat(cx, v, placed, true, false);
+      }
+    }
+    ctx.restore();
+
+    // ---- time bar ----
+    if (state === 'playing' || state === 'seatdone'){
+      const frac = clamp(timeLeft / DURATION, 0, 1), bw = W - 48;
+      ctx.fillStyle = 'rgba(0,0,0,.12)'; roundRect(24, timeBarY, bw, 9, 4); ctx.fill();
+      const col = lastCall ? (Math.sin(clock * 14) > 0 ? '#ff3b30' : '#ff7a3b') : (frac < 0.3 ? '#e8a13b' : '#6cc06a');
+      ctx.fillStyle = col; roundRect(24, timeBarY, bw * frac, 9, 4); ctx.fill();
+      if (lastCall && state === 'playing'){
+        ctx.save(); ctx.globalAlpha = 0.5 + Math.sin(clock * 10) * 0.4; ctx.fillStyle = '#ff3b30';
+        ctx.font = '800 15px ui-rounded, "SF Pro Rounded", Nunito, system-ui, sans-serif'; ctx.textAlign = 'center';
+        ctx.fillText('LAST CALL', W / 2, timeBarY + 30); ctx.restore();
+      }
+    }
+
+    // multiplier chip
+    if (state === 'playing' && mult >= 2){
+      ctx.save(); ctx.textAlign = 'center';
+      const s = 1 + Math.min(mult, MAXMULT) * 0.03 + Math.sin(clock * 9) * 0.03;
+      ctx.translate(Math.min(W * 0.85, W - 84), timeBarY + 34); ctx.scale(s, s);   // capped so it clears the SFX pill
+      ctx.font = '800 24px ui-rounded, "SF Pro Rounded", Nunito, system-ui, sans-serif';
+      ctx.lineWidth = 5; ctx.strokeStyle = 'rgba(255,255,255,.85)'; ctx.strokeText('x' + mult, 0, 0);
+      ctx.fillStyle = '#c9962f'; ctx.fillText('x' + mult, 0, 0); ctx.restore();
+    }
+
+    // table fanfare stamp
+    if (fanfareT > 0){
+      ctx.save(); ctx.textAlign = 'center';
+      const s = 1 + (1 - fanfareT) * 0.4; ctx.globalAlpha = clamp(fanfareT * 1.5, 0, 1);
+      ctx.translate(W / 2, H * 0.34); ctx.scale(s, s);
+      ctx.font = '900 34px ui-rounded, "SF Pro Rounded", Nunito, system-ui, sans-serif';
+      ctx.lineWidth = 7; ctx.strokeStyle = 'rgba(255,255,255,.9)'; ctx.strokeText('TABLE SET!', 0, 0);
+      ctx.fillStyle = '#f4c542'; ctx.fillText('TABLE SET!', 0, 0); ctx.restore();
+    }
+
+    // sparks — source-over (readable on light plates) + a dark rim, anchored to their own seat
+    for (const s of sparks){
+      const rr = s.r * (1.2 - s.life);
+      const sxp = seatScreenX(s.seat) + Math.cos(s.a) * rr, syp = seatCY + Math.sin(s.a) * rr, rad = 2.6 * s.life + 0.6;
+      ctx.globalAlpha = clamp(s.life, 0, 1);
+      ctx.fillStyle = '#f4c542'; ctx.beginPath(); ctx.arc(sxp, syp, rad, 0, 7); ctx.fill();
+      ctx.globalAlpha = clamp(s.life, 0, 1) * 0.5; ctx.strokeStyle = 'rgba(110,74,20,.9)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(sxp, syp, rad, 0, 7); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+    // particle burst — additive
+    ctx.save(); ctx.globalCompositeOperation = 'lighter';
+    for (const p of particles){ ctx.globalAlpha = clamp(p.life, 0, 1); ctx.fillStyle = 'hsl(' + p.hue + ',85%,62%)';
+      ctx.beginPath(); ctx.arc(p.x, p.y, 3 * p.life + 0.6, 0, 7); ctx.fill(); }
+    ctx.restore();
+    for (const f of floats){
+      ctx.save(); ctx.globalAlpha = clamp(f.life, 0, 1); const s = 1 + 0.2 * clamp(f.life, 0, 1);
+      ctx.translate(f.x, f.y); ctx.scale(s, s);
+      ctx.font = '800 20px ui-rounded, "SF Pro Rounded", Nunito, system-ui, sans-serif'; ctx.textAlign = 'center';
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(0,0,0,.4)'; ctx.strokeText(f.t, 0, 0);
+      ctx.fillStyle = f.c; ctx.fillText(f.t, 0, 0); ctx.restore();
+    }
+
+    // ---- seat-done overlay: admire the place you just set, tap to continue ----
+    if (state === 'seatdone' && seatIndex > 0){
+      const st = seats[seatIndex - 1];
+      ctx.save(); ctx.textAlign = 'center'; ctx.lineJoin = 'round';
+      // light text + dark outline so it reads on ANY tablecloth (light diner, red bistro, dark-green fine dining)
+      function otext(t, y, size, fill){
+        ctx.font = '800 ' + size + 'px ui-rounded, "SF Pro Rounded", Nunito, system-ui, sans-serif';
+        ctx.lineWidth = Math.max(3, size * 0.3); ctx.strokeStyle = 'rgba(0,0,0,.6)'; ctx.strokeText(t, W / 2, y);
+        ctx.fillStyle = fill; ctx.fillText(t, W / 2, y);
+      }
+      otext('PLACE ' + seatIndex + '  ·  +' + st.pts, H * 0.24, 22, '#fff3dc');
+      const tc = { perfect: '#f4c542', sharp: '#7ad17a', good: '#dcc37e', sloppy: '#cccccc' };
+      const dy = seatCY + plateR * 1.55;
+      st.utensils.forEach((u, i) => {                          // 3 grade dots (carry the tier colours)
+        ctx.fillStyle = tc[u.tier] || '#cccccc';
+        ctx.beginPath(); ctx.arc(W / 2 + (i - 1) * 30, dy, 8, 0, 7); ctx.fill();
+        ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.lineWidth = 1.5; ctx.stroke();
+      });
+      const allPerfect = st.utensils.every((u) => u.tier === 'perfect');
+      const anySloppy = st.utensils.some((u) => u.tier === 'sloppy');
+      otext(allPerfect ? 'PERFECT SETTING!' : (anySloppy ? 'keep it straighter' : 'nice setting'),
+        dy + 28, 15, allPerfect ? '#f4c542' : '#fff3dc');
+      if (seatDoneT > 0.25) otext('tap for the next place ▸', H * 0.86, 14, '#fff3dc');
+      ctx.restore();
+    }
+  }
+
+  // ---------- loop ----------
+  let last = 0;
+  function loop(ts){
+    if (!last) last = ts;
+    let dt = (ts - last) / 1000; last = ts; lastRafTs = ts;
+    if (dt > 0.05) dt = 0.05;
+    try { update(dt); render(); }
+    catch (err){ if (window.console) console.error('[fork-it] frame error', err); }
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+
+  // ---------- input ----------
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!e.isPrimary) return;
+    e.preventDefault();
+    Arcade.audio.resume();
+    if (state === 'playing') tap();
+    else if (state === 'seatdone') continueSeat();
+  }, { passive: false });
+  canvas.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+  canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  window.addEventListener('keydown', (e) => {
+    if (Arcade.isTyping(e)) return;
+    if (e.code !== 'Space' && e.code !== 'Enter') return;
+    e.preventDefault();
+    if (e.repeat) return;
+    Arcade.audio.resume();
+    if (state === 'playing'){ tap(); return; }
+    if (state === 'seatdone'){ continueSeat(); return; }
+    if (Arcade.overlayVisible()) Arcade.play();
+  });
+
+  updateHud();
+
+  // --- test seam ---
+  if (typeof window !== 'undefined' && window.__FORKIT_TEST__){
+    window.__FORKIT_TEST__.api = {
+      roundRect, drawUtensil,
+      start: () => Arcade.play(),
+      state: () => state,
+      score: () => Math.floor(score),
+      mult: () => mult,
+      seat: () => seatIndex,
+      activeIndex: () => activeIndex,
+      activeKind: () => (active ? active.kind : null),
+      timeLeft: () => timeLeft,
+      lastTier: () => lastTier,
+      seatsDone: () => seats.length,
+      tableTier: () => tableTier(),
+      perfectBand: () => perfectBand(),
+      sharpBand: () => sharpBand(),
+      goodBand: () => goodBand(),
+      seatBase: () => seatBase(),
+      setAngle: (a) => { if (active) active.angle = a; },
+      angleErr: () => angleErr(),
+      tap: () => tap(),
+      cont: () => continueSeat(),
+      setTime: (t) => { timeLeft = t; },
+      tick: (dt) => update(dt)
+    };
+  }
+})();
+</script>
+</body>
+</html>

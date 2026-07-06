@@ -73,6 +73,7 @@ var window = {
   __PANCAKE_TEST__: {},                 // <- flips each game's test seam on
   __SIZZLE_TEST__: {},
   __ESPRESSO_TEST__: {},
+  __FORKIT_TEST__: {},
   addEventListener: function(t, fn){ this._h[t] = fn; }
   // no AudioContext -> audio stays disabled during tests
 };

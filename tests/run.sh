@@ -38,6 +38,12 @@ if [ ! -s "$TMP/espresso.js" ]; then echo "could not extract espresso <script>";
 if "$JSC" "$DIR/env.js" "$ROOT/shared/arcade.js" "$TMP/espresso.js" "$DIR/espresso.tests.js"; then :; else rc=1; fi
 
 echo ""
+echo "=== Fork It! — game regression suite ==="
+awk 'f && /<\/script>/{f=0} f; /<script>/{f=1}' "$ROOT/fork-it/index.html" > "$TMP/forkit.js"
+if [ ! -s "$TMP/forkit.js" ]; then echo "could not extract fork-it <script>"; exit 2; fi
+if "$JSC" "$DIR/env.js" "$ROOT/shared/arcade.js" "$TMP/forkit.js" "$DIR/forkit.tests.js"; then :; else rc=1; fi
+
+echo ""
 echo "=== Leaderboard Worker — logic suite ==="
 awk '/>>> TESTABLE/{f=1;next} /<<< TESTABLE/{f=0} f' "$ROOT/leaderboard/worker.js" > "$TMP/helpers.js"
 if [ ! -s "$TMP/helpers.js" ]; then echo "could not extract Worker helpers"; exit 2; fi

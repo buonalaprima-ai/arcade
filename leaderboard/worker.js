@@ -13,7 +13,8 @@
 var GAMES = {
   'pancake-tower': { maxScore: 100000 },
   'sizzle': { maxScore: 1000000 },
-  'espresso': { maxScore: 1000000 }
+  'espresso': { maxScore: 1000000 },
+  'fork-it': { maxScore: 1000000 }
 };
 var MAX_ENTRIES = 50;      // how many scores we keep per game
 var DEFAULT_TOP = 10;      // how many we return by default
