@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#FBECD0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<title>Pop Shot 🍿</title>
+<link rel="stylesheet" href="../shared/arcade.css">
+<style>
+  :root{
+    --ink:#4a3420;
+    --ink-soft:#8a6a48;
+    --accent:#e0851f;
+    --bg0:#fbecd0;
+    --bg1:#f2cf9c;
+    --btn0:#f0b53e;
+    --btn1:#e0851f;
+    --btn-shadow-rgb:200,120,40;
+    --row-tint:rgba(150,110,60,.12);
+    --row-me:rgba(224,133,30,.24);
+    --shade-rgb:90,60,30;
+    --hint-top:66%;
+  }
+  #hint{ color:#fff6e2; text-shadow:0 1px 0 rgba(60,35,10,.95),0 -1px 0 rgba(60,35,10,.95),1px 0 0 rgba(60,35,10,.95),-1px 0 0 rgba(60,35,10,.95),0 2px 6px rgba(60,35,10,.55); }
+</style>
+</head>
+<body>
+<div id="app">
+  <canvas id="game"></canvas>
+</div>
+
+<script src="../shared/leaderboard.js"></script>
+<script src="../shared/arcade.js"></script>
+<script>
+(() => {
+  "use strict";
+
+  // ---------- tuning ----------
+  const LIVES = 3;
+  const RAMP = 32;               // kernels resolved to reach full heat
+  const PRED_DT = 1 / 60;        // fixed step the aim predictor integrates at (mirrors one 60fps sim frame)
+
+  // ---------- state ----------
+  let state = 'menu';            // 'menu' | 'playing' | 'over'
+  let score = 0, lives = LIVES, resolved = 0;
+  let kernel = null;             // { x, y, vx, vy, fuse, maxFuse, state:'drop'|'seat'|'fly' }
+  let targets = [];              // { x, y, baseY, vx, r, kind:'good'|'bad', bob, born }
+  let reloadT = 0;
+  let aiming = false, dragStart = { x: 0, y: 0 }, dragNow = { x: 0, y: 0 }, aimId = null;
+  let best = parseInt(localStorage.getItem('popShotBest') || '0', 10) || 0;
+  let clock = 0, shake = 0, firstAim = false, lastShown = 0, slowmo = false;
+  let particles = [], floats = [], rings = [];
+  let lastBurstPos = null;
+
+  // ---------- shell ----------
+  Arcade.init({
+    gameId: 'pop-shot',
+    emoji: '🍿',
+    emojiAnim: 'bob',
+    title: 'Pop Shot',
+    subtitle: 'Sling the hot kernel to POP a cloud of popcorn on the flying&nbsp;corn.<br>Keep the blast off your face — and off the chili&nbsp;peppers!',
+    hint: 'pull back &amp; release to sling ✦',
+    onPlay: startRun,
+    isPlaying: () => state === 'playing'
+  });
+
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+  const wrap = document.getElementById('app');
+
+  let W = 0, H = 0, scoopX = 0, scoopY = 0, G = 0, KR = 0, TR = 0, MAXDRAG = 0, MAXSPEED = 0, BURST = 0, DANGER = 0;
+  let bandT = 0, bandB = 0, bandL = 0, bandR = 0;
+  function resize(){
+    const rect = wrap.getBoundingClientRect();
+    W = rect.width; H = rect.height;
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    canvas.width = Math.round(W * dpr); canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    scoopX = W * 0.5; scoopY = H * 0.8;
+    G = H * 1.1; KR = W * 0.03; TR = W * 0.05;
+    MAXDRAG = Math.min(W * 0.42, 150); MAXSPEED = H * 1.55; BURST = W * 0.24;
+    DANGER = H * 0.2;              // dome around the pan where your own pop can splash you
+    bandT = H * 0.12; bandB = H * 0.5; bandL = W * 0.14; bandR = W * 0.86;
+  }
+  window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+
+  // ---------- helpers ----------
+  function clamp(v, a, b){ return v < a ? a : (v > b ? b : v); }
+  function lerp(a, b, t){ return a + (b - a) * t; }
+  function hypot(x, y){ return Math.sqrt(x * x + y * y); }
+  function roundRect(x, y, w, h, r){
+    if (!(w > 0) || !(h > 0)){ ctx.beginPath(); return; }
+    r = Math.max(0, Math.min(r, w / 2, h / 2));
+    ctx.beginPath(); ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r); ctx.closePath();
+  }
+
+  // ---------- difficulty (heat curve) ----------
+  function heat(){ return clamp(resolved / RAMP, 0, 1); }
+  function maxFuse(){ return lerp(4.0, 1.9, heat()); }
+  function targetCount(){ return resolved < 3 ? 1 : resolved < 8 ? 2 : resolved < 14 ? 3 : resolved < 24 ? 4 : 5; }
+  function driftSpeed(){ return W * (0.05 + heat() * 0.22); }         // faster overall, and climbs with heat
+  function badChance(){ return lerp(0.10, 0.34, heat()); }            // more peppers as it heats up
+  function reloadDelay(){ return lerp(0.6, 0.32, heat()); }
+
+  // ---------- audio ----------
+  function thwip(power){ Arcade.audio.tone(180 + power * 300, 0.09, 'sawtooth', 0.08, 0); Arcade.audio.tone(90, 0.08, 'square', 0.05, 0); }
+  function popSound(n){
+    for (let i = 0; i < Math.max(1, n); i++){
+      Arcade.audio.tone(520 + i * 140, 0.09, 'triangle', 0.11, i * 0.07);   // rising pentatonic-ish cascade
+      Arcade.audio.tone((520 + i * 140) * 1.5, 0.1, 'sine', 0.06, i * 0.07 + 0.01);
+    }
+  }
+  function jackpotSound(){ [523, 659, 784, 1046, 1318].forEach((f, i) => Arcade.audio.tone(f, 0.14, 'triangle', 0.1, i * 0.05)); }
+  function splatSound(){ Arcade.audio.tone(150, 0.28, 'sawtooth', 0.16, 0); Arcade.audio.tone(80, 0.32, 'sine', 0.11, 0.02); }
+  function spicySound(){ Arcade.audio.tone(120, 0.3, 'sawtooth', 0.14, 0); Arcade.audio.tone(300, 0.18, 'square', 0.08, 0.02); }
+  let tickAt = 0;
+  function fuseTick(f){                                     // accelerating tick in the last second
+    if (f > 1.0) return;
+    const rate = lerp(0.5, 0.12, 1 - f);
+    if (clock - tickAt < rate) return;
+    tickAt = clock;
+    Arcade.audio.tone(900 + (1 - f) * 500, 0.03, 'square', 0.04, 0);
+  }
+
+  // ---------- music (cheerful 3/4 calliope waltz) ----------
+  const BPM = 150;
+  const secPerStep = 60 / BPM / 4;
+  const NOTE = {
+    C3:130.81, D3:146.83, E3:164.81, F3:174.61, G3:196.00, A3:220.00, B3:246.94,
+    C4:261.63, D4:293.66, E4:329.63, F4:349.23, G4:392.00, A4:440.00, B4:493.88,
+    C5:523.25, D5:587.33, E5:659.25, F5:698.46, G5:783.99, A5:880.00
+  };
+  NOTE.GS4 = 415.30;
+  const CH = { C:['C3','E4','G4'], G:['G3','D4','G4'], Am:['A3','C4','E4'], F:['F3','A4','C5'], Dm:['D3','F4','A4'], E:['E3','GS4','B4'] };
+  const PROG = ['C', 'G', 'Am', 'F', 'C', 'G', 'C', 'C'];
+  const MEL = [
+    [0,'G4',3],[3,'C5',3],[6,'E5',6],[12,'D5',3],[15,'B4',3],[18,'G4',6],
+    [24,'A4',3],[27,'C5',3],[30,'E5',6],[36,'F5',3],[39,'D5',3],[42,'C5',6],
+    [48,'G4',3],[51,'C5',3],[54,'E5',6],[60,'D5',3],[63,'B4',3],[66,'G4',6],
+    [72,'E5',3],[75,'D5',3],[78,'C5',6],[84,'G4',3],[87,'B4',3],[90,'C5',6]
+  ];
+  const BAR = 12, STEPS = PROG.length * BAR;
+  const melAt = new Array(STEPS).fill(null);
+  MEL.forEach((n) => { melAt[n[0]] = { f: NOTE[n[1]], d: n[2] * secPerStep }; });
+  Arcade.setSong({
+    secPerStep: secPerStep, steps: STEPS, volume: 0.4,
+    onStep(step, time, io){
+      const bar = Math.floor(step / BAR), inBar = step % BAR, ch = CH[PROG[bar]];
+      if (inBar === 0) io.note(NOTE[ch[0]], time, 3.2 * secPerStep, 'triangle', 0.16);          // oom
+      if (inBar === 4 || inBar === 8){ io.note(NOTE[ch[1]], time, 2.2 * secPerStep, 'triangle', 0.08); io.note(NOTE[ch[2]], time, 2.2 * secPerStep, 'triangle', 0.06); }  // pah pah
+      const m = melAt[step];
+      if (m && m.f) io.note(m.f, time, m.d * 0.9, 'square', 0.07);
+      if (inBar === 0) io.hat(time);
+    }
+  });
+
+  // ---------- fx ----------
+  function puff(x, y, n){
+    for (let i = 0; i < n; i++){
+      const a = Math.random() * Math.PI * 2, sp = 40 + Math.random() * 220;
+      particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 40, life: 1, r: KR * (0.5 + Math.random()), kind: 'corn' });
+    }
+  }
+  function splatFx(x, y, kind){
+    for (let i = 0; i < 16; i++){
+      const a = Math.random() * Math.PI * 2, sp = 60 + Math.random() * 200;
+      particles.push({ x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp - 20, life: 1, r: KR * 0.6, kind: kind || 'splat' });
+    }
+  }
+  function addFloat(t, x, y, c, big){ floats.push({ t, x, y, life: 1, c: c || '#e0a11e', big: !!big }); }
+
+  // ---------- game flow ----------
+  function updateHud(){ Arcade.setScore(Math.floor(score)); Arcade.setBest(best); Arcade.setStrikes('🌽'.repeat(Math.max(0, lives))); }
+  function spawnKernel(){ kernel = { x: scoopX, y: scoopY - H * 0.22, vx: 0, vy: 0, fuse: 0, maxFuse: maxFuse(), acc: 0, state: 'drop' }; }
+  function spawnTarget(){
+    const y = bandT + Math.random() * (bandB - bandT);
+    const spd = driftSpeed() * (0.55 + Math.random() * 1.0);              // varied speed
+    targets.push({
+      x: bandL + Math.random() * (bandR - bandL), y: y, baseY: y,
+      vx: (Math.random() < 0.5 ? -1 : 1) * spd,
+      r: TR * (0.7 + Math.random() * 0.75),                              // varied size
+      kind: Math.random() < badChance() ? 'bad' : 'good',
+      bob: Math.random() * 6.28, born: 0
+    });
+  }
+  function reset(){
+    score = 0; lives = LIVES; resolved = 0; reloadT = 0; aiming = false; aimId = null;
+    kernel = null; targets = []; particles = []; floats = []; rings = [];
+    shake = 0; firstAim = false; lastShown = 0; lastBurstPos = null;
+    for (let i = 0; i < targetCount(); i++) spawnTarget();
+    spawnKernel();
+    updateHud();
+  }
+  function startRun(){ reset(); state = 'playing'; }
+
+  // ---------- scoring & life loss ----------
+  function loseLife(x, y, label, color, kind){
+    lives--;
+    shake = 0.5; splatFx(x, y, kind); splatSound(); Arcade.audio.buzz(30);
+    addFloat(label, x, y - KR * 3, color || '#c0341b', true);
+    updateHud();
+    if (lives <= 0) gameOver();
+  }
+  function splat(){                                          // seated fuse-out — it popped in the ladle, on you
+    resolved++;
+    kernel = null; reloadT = reloadDelay() + 0.25; aiming = false; aimId = null;
+    loseLife(scoopX, scoopY, 'POP!', '#c0341b');
+  }
+  function selfBlast(x, y){ loseLife(x, y, 'TOO CLOSE!', '#c0341b'); }
+  function spicyBlast(x, y){ spicySound(); loseLife(x, y, 'SPICY! 🌶️', '#e2402f', 'spice'); }
+
+  function popResult(x, y){                                  // what the bloom catches
+    const good = [], bad = [];
+    for (const t of targets){
+      if (t.dead) continue;
+      if (hypot(t.x - x, t.y - y) <= BURST + t.r){ (t.kind === 'bad' ? bad : good).push(t); }
+    }
+    return { good: good, bad: bad };
+  }
+  function explode(x, y){                                    // resolve a bloom: score corn, but a pepper burns you
+    rings.push({ x, y, r: 0, life: 1 });
+    puff(x, y, 22);
+    const res = popResult(x, y);
+    if (res.bad.length > 0){                                 // caught a chili — spicy blast, lose a life, no points
+      res.bad.forEach((t) => { t.dead = true; });
+      targets = targets.filter((t) => { if (t.dead){ puff(t.x, t.y, 10); return false; } return true; });
+      spicyBlast(x, y);
+      return 0;
+    }
+    const n = Math.min(res.good.length, 4);
+    if (n > 0){
+      const gained = 100 * n * n;
+      score += gained;
+      res.good.forEach((t) => { t.dead = true; });
+      targets = targets.filter((t) => { if (t.dead){ puff(t.x, t.y, 8); addFloat('+' + gained, t.x, t.y - t.r, '#fff2c4'); return false; } return true; });
+      popSound(n);
+      if (n >= 3){ addFloat('JACKPOT  x' + n, x, y - 20, '#e0a11e', true); jackpotSound(); shake = 0.3; Arcade.audio.buzz(20); }
+      else { Arcade.audio.buzz(6); }
+    } else { Arcade.audio.tone(240, 0.1, 'sine', 0.05, 0); }
+    return n;
+  }
+  function burstKernel(){
+    lastBurstPos = { x: kernel.x, y: kernel.y };
+    const x = kernel.x, y = kernel.y;
+    kernel = null; resolved++; reloadT = reloadDelay(); aiming = false; aimId = null;
+    if (hypot(x - scoopX, y - scoopY) < DANGER){            // popped in your own face
+      rings.push({ x, y, r: 0, life: 1 }); puff(x, y, 18);
+      selfBlast(x, y);
+    } else {
+      explode(x, y);
+    }
+    updateHud();
+  }
+  function gameOver(){
+    state = 'over';
+    Arcade.audio.tone(200, 0.45, 'sawtooth', 0.13, 0); Arcade.audio.buzz(35);
+    const s = Math.floor(score), isBest = s > best;
+    if (isBest){ best = s; localStorage.setItem('popShotBest', String(best)); }
+    updateHud();
+    let title = 'Popped out!', emoji = '🍿';
+    if (s >= 6000){ title = 'Kernel King!'; emoji = '🤩'; }
+    else if (s >= 2500){ title = 'Buttery!'; emoji = '😎'; }
+    Arcade.gameOver({ score: s, isBest: isBest, title: title, emoji: emoji });
+  }
+
+  // ---------- aim ----------
+  function computeLaunch(){
+    const dx = dragNow.x - dragStart.x, dy = dragNow.y - dragStart.y, dist = hypot(dx, dy);
+    if (dist < 12) return null;
+    const power = clamp(dist, 0, MAXDRAG) / MAXDRAG;
+    let ang = Math.atan2(-dy, -dx);                         // opposite of the pull
+    if (ang >= 0) ang = (ang <= Math.PI / 2) ? -0.3 : -Math.PI + 0.3;   // force the shot upward
+    else ang = clamp(ang, -Math.PI + 0.3, -0.3);
+    const sp = power * MAXSPEED;
+    return { vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp, power: power };
+  }
+  function fire(){
+    const L = computeLaunch();
+    if (!L || !kernel || kernel.state !== 'seat') return;
+    kernel.vx = L.vx; kernel.vy = L.vy; kernel.state = 'fly';
+    thwip(L.power); Arcade.audio.buzz(8);
+  }
+
+  // shared ballistic step — used by BOTH the live sim and the aim predictor, so the drawn
+  // trajectory / POP-HERE marker can never diverge from where the kernel actually goes.
+  function flyStep(s, h){
+    s.vy += G * h; s.x += s.vx * h; s.y += s.vy * h;
+    if (s.x < KR){ s.x = KR; s.vx = Math.abs(s.vx) * 0.7; }
+    if (s.x > W - KR){ s.x = W - KR; s.vx = -Math.abs(s.vx) * 0.7; }
+  }
+  function predictPath(L, fuse){                            // trace the real bounced flight to fuse-end / bottom-exit
+    const pts = [{ x: scoopX, y: scoopY }];
+    const s = { x: scoopX, y: scoopY, vx: L.vx, vy: L.vy };
+    let f = fuse, guard = 0;
+    while (f > 0 && guard++ < 600){
+      flyStep(s, PRED_DT); f -= PRED_DT;                    // mirror the sim: full steps, stop when fuse spent
+      pts.push({ x: s.x, y: s.y });
+      if (s.y > H + KR * 4) break;
+    }
+    return { pts: pts, end: { x: s.x, y: s.y } };
+  }
+
+  // ---------- update ----------
+  function update(dt){
+    clock += dt;
+    if (shake > 0) shake = Math.max(0, shake - dt * 2);
+    const slow = aiming && kernel && kernel.state === 'seat';
+    const wdt = slow ? dt * 0.32 : dt;                      // bullet-time while aiming (fuse still ticks real-time)
+    slowmo = slow && state === 'playing';
+
+    if (state === 'playing'){
+      if (kernel){
+        if (kernel.state === 'drop'){
+          kernel.y += H * 1.3 * wdt;
+          if (kernel.y >= scoopY){ kernel.y = scoopY; kernel.state = 'seat'; kernel.fuse = kernel.maxFuse; }
+        } else if (kernel.state === 'seat'){
+          kernel.fuse -= dt;                                // REAL time — urgency even in bullet-time
+          fuseTick(kernel.fuse);
+          if (kernel.fuse <= 0) splat();
+        } else if (kernel.state === 'fly'){
+          // fixed-timestep accumulator: advance in exact PRED_DT chunks so the live flight
+          // integrates identically to predictPath() on ANY frame rate (60/120Hz, throttled).
+          kernel.acc = (kernel.acc || 0) + wdt;
+          while (kernel && kernel.acc >= PRED_DT){
+            flyStep(kernel, PRED_DT); kernel.fuse -= PRED_DT; kernel.acc -= PRED_DT;
+            if (kernel.fuse <= 0 || kernel.y > H + KR * 4){ burstKernel(); break; }
+          }
+        }
+      } else if (reloadT > 0){
+        reloadT -= dt; if (reloadT <= 0) spawnKernel();
+      }
+      // keep the air stocked with corn (and the odd pepper)
+      while (targets.length < targetCount()) spawnTarget();
+      const tdrift = (kernel && kernel.state === 'fly') ? wdt * 0.25 : wdt;   // near-freeze drift mid-flight so the pop preview stays truthful
+      for (const t of targets){
+        t.born = Math.min(1, (t.born || 0) + dt * 3);
+        t.x += t.vx * tdrift;
+        if (t.x < bandL){ t.x = bandL; t.vx = Math.abs(t.vx); }
+        if (t.x > bandR){ t.x = bandR; t.vx = -Math.abs(t.vx); }
+        t.y = t.baseY + Math.sin((clock + t.bob) * 1.6) * t.r * 0.14;   // gentle float
+      }
+      if (Math.floor(score) !== lastShown){ lastShown = Math.floor(score); updateHud(); }
+    }
+
+    for (const p of particles){ p.vy += 340 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt * 1.3; }
+    particles = particles.filter((p) => p.life > 0);
+    for (const f of floats){ f.y -= dt * 36; f.life -= dt * 0.8; }
+    floats = floats.filter((f) => f.life > 0);
+    for (const r of rings){ r.r += (BURST - r.r) * Math.min(1, dt * 9); r.life -= dt * 2.2; }
+    rings = rings.filter((r) => r.life > 0);
+  }
+
+  // ---------- render ----------
+  function drawCorn(r){
+    ctx.fillStyle = '#5aa03a';                              // husk leaves
+    ctx.beginPath(); ctx.moveTo(0, -r * 1.05); ctx.quadraticCurveTo(-r * 0.75, -r * 1.25, -r * 0.32, -r * 0.5); ctx.quadraticCurveTo(-r * 0.12, -r * 0.9, 0, -r * 0.85); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(0, -r * 1.05); ctx.quadraticCurveTo(r * 0.75, -r * 1.25, r * 0.32, -r * 0.5); ctx.quadraticCurveTo(r * 0.12, -r * 0.9, 0, -r * 0.85); ctx.fill();
+    ctx.fillStyle = '#f4c430';                              // cob
+    ctx.beginPath(); ctx.ellipse(0, r * 0.08, r * 0.6, r * 0.9, 0, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(120,78,20,.55)'; ctx.lineWidth = Math.max(1.5, r * 0.07); ctx.stroke();   // outline so the gold separates from the warm wall
+    ctx.fillStyle = '#e0a81e';                              // kernels
+    for (let yy = -2; yy <= 2; yy++){ for (let xx = -1; xx <= 1; xx++){ ctx.beginPath(); ctx.arc(xx * r * 0.3 + (Math.abs(yy) % 2 ? r * 0.15 : 0), yy * r * 0.3 + r * 0.08, r * 0.12, 0, 7); ctx.fill(); } }
+    ctx.fillStyle = 'rgba(255,255,255,.35)';                // highlight
+    ctx.beginPath(); ctx.ellipse(-r * 0.24, -r * 0.2, r * 0.12, r * 0.3, 0, 0, 7); ctx.fill();
+  }
+  function drawPepper(r){
+    ctx.save(); ctx.rotate(0.25);
+    ctx.fillStyle = '#e2402f';                              // body
+    ctx.beginPath(); ctx.moveTo(0, -r * 0.65);
+    ctx.quadraticCurveTo(r * 0.7, -r * 0.55, r * 0.5, r * 0.25);
+    ctx.quadraticCurveTo(r * 0.35, r * 1.0, -r * 0.05, r * 0.9);
+    ctx.quadraticCurveTo(-r * 0.42, r * 0.8, -r * 0.32, r * 0.1);
+    ctx.quadraticCurveTo(-r * 0.28, -r * 0.4, 0, -r * 0.65);
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.3)';                 // sheen
+    ctx.beginPath(); ctx.ellipse(-r * 0.12, r * 0.1, r * 0.07, r * 0.38, 0.2, 0, 7); ctx.fill();
+    ctx.restore();
+    ctx.strokeStyle = '#4f8a2e'; ctx.lineWidth = Math.max(2, r * 0.16); ctx.lineCap = 'round';   // stem
+    ctx.beginPath(); ctx.moveTo(0, -r * 0.55); ctx.lineTo(r * 0.16, -r * 1.0); ctx.stroke();
+    ctx.fillStyle = '#4f8a2e'; ctx.beginPath(); ctx.arc(0, -r * 0.58, r * 0.17, 0, 7); ctx.fill();
+  }
+  function drawTarget(t){
+    const s = t.born < 1 ? 0.5 + t.born * 0.5 : 1;
+    ctx.save(); ctx.translate(t.x, t.y); ctx.scale(s, s);
+    ctx.fillStyle = 'rgba(80,50,20,.2)';
+    ctx.beginPath(); ctx.ellipse(0, t.r * 0.95, t.r * 0.7, t.r * 0.22, 0, 0, 7); ctx.fill();
+    if (t.kind === 'bad') drawPepper(t.r); else drawCorn(t.r);
+    ctx.restore();
+  }
+  function kernelColor(f, mf){
+    const p = clamp(f / mf, 0, 1);                          // 1 cool -> 0 hot
+    if (p > 0.5) return '#6b4423';
+    if (p > 0.2) return '#d1791f';
+    return (clock * 12 % 1 < 0.5) ? '#e8341b' : '#ff6a3a';  // flashing red-hot
+  }
+  function drawKernel(k, ox, oy){
+    ox = ox || 0; oy = oy || 0;
+    const kx = k.x + ox, ky = k.y + oy;
+    ctx.save();
+    if (k.state === 'seat'){                                // shrinking fuse glow-ring
+      const p = clamp(k.fuse / k.maxFuse, 0, 1);
+      ctx.strokeStyle = p > 0.2 ? 'rgba(240,180,60,.8)' : 'rgba(230,60,30,.95)'; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(kx, ky - KR * 0.2, KR * 2, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * p); ctx.stroke();
+    }
+    ctx.fillStyle = kernelColor(k.fuse, k.maxFuse);
+    ctx.beginPath(); ctx.ellipse(kx, ky, KR, KR * 1.15, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,.4)'; ctx.beginPath(); ctx.arc(kx - KR * 0.3, ky - KR * 0.4, KR * 0.3, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+  function aimOffset(){                                     // how far the loaded kernel visually sits back in the sling
+    if (!(aiming && kernel && kernel.state === 'seat')) return null;
+    const px = dragNow.x - dragStart.x, py = dragNow.y - dragStart.y, pd = hypot(px, py);
+    if (pd < 1) return { x: 0, y: 0 };
+    const back = Math.min(pd, MAXDRAG) / MAXDRAG * KR * 4;
+    return { x: px / pd * back, y: py / pd * back };
+  }
+  function drawSling(ox, oy){                               // two elastic strands that stretch as you pull
+    const lx = scoopX + ox, ly = scoopY + oy;
+    ctx.save(); ctx.strokeStyle = 'rgba(90,58,24,.9)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(scoopX - KR * 1.7, scoopY + KR * 0.2); ctx.lineTo(lx, ly); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(scoopX + KR * 1.7, scoopY + KR * 0.2); ctx.lineTo(lx, ly); ctx.stroke();
+    ctx.restore();
+  }
+  function drawStove(){                                     // the sizzling pan + the launch ladle
+    ctx.save();
+    const panY = scoopY + KR * 1.4;
+    ctx.fillStyle = '#241f1b';                              // pan body
+    ctx.beginPath(); ctx.ellipse(scoopX, panY + H * 0.05, W * 0.64, H * 0.13, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#3a3330';
+    ctx.beginPath(); ctx.ellipse(scoopX, panY, W * 0.6, H * 0.05, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = '#e6a53a';                              // oil
+    ctx.beginPath(); ctx.ellipse(scoopX, panY, W * 0.52, H * 0.038, 0, 0, 7); ctx.fill();
+    ctx.fillStyle = 'rgba(255,228,150,.7)';
+    ctx.beginPath(); ctx.ellipse(scoopX, panY - H * 0.006, W * 0.44, H * 0.024, 0, 0, 7); ctx.fill();
+    for (let i = 0; i < 5; i++){                            // sizzle bubbles
+      const bx = scoopX + Math.sin(clock * 1.7 + i * 1.9) * W * 0.4;
+      const by = panY + Math.cos(clock * 2.3 + i) * H * 0.008;
+      ctx.fillStyle = 'rgba(255,244,205,.6)';
+      ctx.beginPath(); ctx.arc(bx, by, Math.max(1, W * 0.008 * (1 + Math.sin(clock * 4 + i) * 0.4)), 0, 7); ctx.fill();
+    }
+    ctx.fillStyle = '#9a9aa2'; roundRect(scoopX - KR * 1.9, scoopY + KR * 0.3, KR * 3.8, KR * 1.3, KR * 0.6); ctx.fill();   // ladle
+    ctx.fillStyle = '#7a5a2a'; ctx.beginPath(); ctx.arc(scoopX, scoopY + KR * 0.4, KR * 1.6, 0, Math.PI); ctx.fill();
+    ctx.strokeStyle = '#5b3a18'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(scoopX, scoopY + KR * 0.4, KR * 1.6, 0, Math.PI); ctx.stroke();
+    ctx.fillStyle = '#b0651e'; ctx.beginPath(); ctx.arc(scoopX - KR * 1.7, scoopY + KR * 0.2, KR * 0.32, 0, 7); ctx.fill();   // sling posts
+    ctx.beginPath(); ctx.arc(scoopX + KR * 1.7, scoopY + KR * 0.2, KR * 0.32, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+  function drawSteam(){
+    ctx.save();
+    for (let i = 0; i < 3; i++){
+      const t = (clock * 0.14 + i * 0.34) % 1;
+      const x = scoopX + (i - 1) * W * 0.2 + Math.sin(clock * 0.6 + i * 2) * W * 0.12;
+      const y = scoopY - t * H * 0.55;
+      ctx.globalAlpha = (1 - t) * 0.16;
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath(); ctx.ellipse(x, y, W * 0.06, H * 0.05, 0, 0, 7); ctx.fill();
+    }
+    ctx.restore();
+  }
+  function drawDanger(inside){                              // the "don't pop here" dome above the pan
+    ctx.save();
+    const col = inside ? '235,60,40' : '190,90,45';
+    const a = inside ? 0.42 : 0.13;
+    const g = ctx.createRadialGradient(scoopX, scoopY, DANGER * 0.25, scoopX, scoopY, DANGER);
+    g.addColorStop(0, 'rgba(' + col + ',0)'); g.addColorStop(1, 'rgba(' + col + ',' + a.toFixed(2) + ')');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.moveTo(scoopX - DANGER, scoopY); ctx.arc(scoopX, scoopY, DANGER, Math.PI, Math.PI * 2); ctx.closePath(); ctx.fill();
+    ctx.setLineDash([4, 7]); ctx.strokeStyle = 'rgba(' + col + ',' + (inside ? 0.9 : 0.3) + ')'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(scoopX, scoopY, DANGER, Math.PI, Math.PI * 2); ctx.stroke(); ctx.setLineDash([]);
+    ctx.restore();
+  }
+  function drawAim(path, danger){
+    ctx.save();
+    ctx.setLineDash([2, 8]); ctx.strokeStyle = 'rgba(255,255,255,.8)'; ctx.lineWidth = 3; ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < path.pts.length; i++){ const p = path.pts[i]; if (i === 0) ctx.moveTo(p.x, p.y); else ctx.lineTo(p.x, p.y); }
+    ctx.stroke(); ctx.setLineDash([]);
+    const bx = path.end.x, by = path.end.y;                 // POP HERE — real (bounced) fuse-end point
+    const col = danger ? '235,60,40' : '240,200,90';        // red when releasing would cost a life (in your face OR on a pepper)
+    ctx.fillStyle = 'rgba(' + col + ',.22)'; ctx.beginPath(); ctx.arc(bx, by, BURST, 0, 7); ctx.fill();
+    ctx.strokeStyle = 'rgba(' + col + ',.9)'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(bx, by, BURST, 0, 7); ctx.stroke();
+    const pl = 0.6 + Math.sin(clock * 10) * 0.4;
+    ctx.fillStyle = danger ? '#ff5030' : '#ffd94a'; ctx.beginPath(); ctx.arc(bx, by, 6 + pl * 3, 0, 7); ctx.fill();
+    ctx.restore();
+  }
+  function render(){
+    const bg = ctx.createLinearGradient(0, 0, 0, H);        // warm kitchen wall
+    bg.addColorStop(0, '#fdf3dd'); bg.addColorStop(0.6, '#f7dcab'); bg.addColorStop(1, '#eec27f');
+    ctx.fillStyle = bg; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = 'rgba(180,140,90,.12)'; ctx.lineWidth = 1;   // faint backsplash tiles
+    for (let y = H * 0.1; y < H * 0.72; y += H * 0.09){ ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+
+    const sx = shake > 0 ? (Math.random() * 2 - 1) * shake * 7 : 0;
+    const sy = shake > 0 ? (Math.random() * 2 - 1) * shake * 5 : 0;
+    ctx.save(); ctx.translate(sx, sy);
+
+    drawSteam();
+    for (const t of targets) drawTarget(t);
+
+    let aimPath = null, aimInside = false, aimBad = false;
+    if (state === 'playing' && aiming){
+      const L = computeLaunch();
+      if (L && kernel){
+        aimPath = predictPath(L, kernel.fuse);
+        aimInside = hypot(aimPath.end.x - scoopX, aimPath.end.y - scoopY) < DANGER;
+        aimBad = !aimInside && popResult(aimPath.end.x, aimPath.end.y).bad.length > 0;   // a pepper would be in the bloom
+      }
+    }
+    if (state === 'playing') drawDanger(aimInside);
+    if (aimPath) drawAim(aimPath, aimInside || aimBad);
+
+    for (const r of rings){ ctx.save(); ctx.globalAlpha = clamp(r.life, 0, 1) * 0.8; ctx.strokeStyle = '#fff6dc'; ctx.lineWidth = 4; ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, 7); ctx.stroke(); ctx.restore(); }
+    for (const p of particles){ ctx.globalAlpha = clamp(p.life, 0, 1); ctx.fillStyle = p.kind === 'splat' ? '#7a4a1c' : (p.kind === 'spice' ? '#e2402f' : (Math.random() < 0.5 ? '#fff6dc' : '#f4d873')); ctx.beginPath(); ctx.arc(p.x, p.y, p.r * (0.6 + p.life * 0.6), 0, 7); ctx.fill(); }
+    ctx.globalAlpha = 1;
+
+    drawStove();
+    if (kernel){
+      const off = aimOffset();
+      if (off){ drawSling(off.x, off.y); drawKernel(kernel, off.x, off.y); }
+      else drawKernel(kernel);
+    }
+
+    for (const f of floats){
+      ctx.save(); ctx.globalAlpha = clamp(f.life, 0, 1); const s = 1 + 0.25 * clamp(f.life, 0, 1);
+      ctx.translate(f.x, f.y); ctx.scale(s, s); ctx.textAlign = 'center';
+      ctx.font = '800 ' + (f.big ? 24 : 18) + 'px ui-rounded, "SF Pro Rounded", Nunito, system-ui, sans-serif';
+      ctx.lineWidth = 4; ctx.strokeStyle = 'rgba(50,35,20,.9)'; ctx.strokeText(f.t, 0, 0);
+      ctx.fillStyle = f.c; ctx.fillText(f.t, 0, 0); ctx.restore();
+    }
+    ctx.restore();
+
+    if (slowmo){                                            // focus vignette so bullet-time is felt even when targets are near-still
+      const a = 0.2 + Math.sin(clock * 6) * 0.05;
+      const vg = ctx.createRadialGradient(scoopX, H * 0.52, H * 0.12, scoopX, H * 0.52, H * 0.72);
+      vg.addColorStop(0, 'rgba(28,20,55,0)'); vg.addColorStop(1, 'rgba(28,20,55,' + a.toFixed(3) + ')');
+      ctx.fillStyle = vg; ctx.fillRect(0, 0, W, H);
+    }
+
+    if (state === 'playing'){                               // heat gauge — the pan heats up
+      const gx = W * 0.06, gy = H * 0.93, gw = W * 0.2, hf = heat();
+      ctx.fillStyle = 'rgba(90,60,30,.22)'; roundRect(gx, gy, gw, 8, 4); ctx.fill();
+      ctx.fillStyle = hf > 0.7 ? '#e2402f' : '#e0851f'; roundRect(gx, gy, gw * hf, 8, 4); ctx.fill();
+    }
+  }
+
+  // ---------- loop ----------
+  let last = 0;
+  function loop(ts){
+    if (!last) last = ts;
+    let dt = (ts - last) / 1000; last = ts;
+    if (dt > 0.05) dt = 0.05;
+    try { update(dt); render(); }
+    catch (err){ if (window.console) console.error('[pop-shot] frame error', err); }
+    requestAnimationFrame(loop);
+  }
+  resize();
+  requestAnimationFrame(loop);
+
+  // ---------- input ----------
+  function canvasXY(e){ const r = canvas.getBoundingClientRect(); return { x: e.clientX - r.left, y: e.clientY - r.top }; }
+  canvas.addEventListener('pointerdown', (e) => {
+    if (!e.isPrimary) return; e.preventDefault(); Arcade.audio.resume();
+    if (state !== 'playing' || !kernel || kernel.state !== 'seat' || aiming) return;
+    aiming = true; aimId = e.pointerId; dragStart = dragNow = canvasXY(e);
+    if (canvas.setPointerCapture){ try { canvas.setPointerCapture(e.pointerId); } catch (err){} }
+    if (!firstAim){ firstAim = true; Arcade.hideHint(); }
+  }, { passive: false });
+  canvas.addEventListener('pointermove', (e) => { if (aiming && e.pointerId === aimId){ e.preventDefault(); dragNow = canvasXY(e); } }, { passive: false });
+  function endAim(e){
+    if (!aiming || (e && e.pointerId !== aimId)) return;
+    if (e && e.preventDefault) e.preventDefault();
+    fire(); aiming = false; aimId = null;
+  }
+  canvas.addEventListener('pointerup', endAim, { passive: false });
+  canvas.addEventListener('pointercancel', endAim, { passive: false });
+  canvas.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+  canvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  window.addEventListener('keydown', (e) => {
+    if (Arcade.isTyping(e)) return;
+    if (e.code !== 'Space' && e.code !== 'Enter') return;
+    e.preventDefault(); Arcade.audio.resume();
+    if (state !== 'playing' && Arcade.overlayVisible()) Arcade.play();
+  });
+
+  updateHud();
+
+  // --- test seam ---
+  if (typeof window !== 'undefined' && window.__POPSHOT_TEST__){
+    window.__POPSHOT_TEST__.api = {
+      roundRect,
+      start: () => Arcade.play(),
+      state: () => state,
+      score: () => Math.floor(score),
+      lives: () => lives,
+      resolved: () => resolved,
+      kState: () => (kernel ? kernel.state : null),
+      kFuse: () => (kernel ? kernel.fuse : 0),
+      kPos: () => (kernel ? { x: kernel.x, y: kernel.y } : null),
+      seat: () => { if (kernel){ kernel.y = scoopY; kernel.state = 'seat'; kernel.fuse = kernel.maxFuse; } },
+      setFuse: (t) => { if (kernel) kernel.fuse = t; },
+      launch: (vx, vy) => { if (kernel && kernel.state === 'seat'){ kernel.vx = vx; kernel.vy = vy; kernel.state = 'fly'; } },
+      addTarget: (x, y, kind) => { targets.push({ x: x, y: y, baseY: y, vx: 0, r: TR, kind: kind || 'good', bob: 0, born: 1 }); },
+      clearTargets: () => { targets = []; },
+      targets: () => targets.length,
+      explodeAt: (x, y) => explode(x, y),
+      forceBurst: (x, y) => { kernel = { x: x, y: y, vx: 0, vy: 0, fuse: 0, maxFuse: 1, state: 'fly' }; burstKernel(); },
+      predictEnd: (vx, vy, fuse) => predictPath({ vx: vx, vy: vy }, fuse).end,
+      lastBurst: () => lastBurstPos,
+      isAiming: () => aiming,
+      aimDrag: (sx, sy, nx, ny) => { aiming = true; aimId = 1; dragStart = { x: sx, y: sy }; dragNow = { x: nx, y: ny }; },
+      scoop: () => ({ x: scoopX, y: scoopY }),
+      burstR: () => BURST,
+      danger: () => DANGER,
+      W: () => W, H: () => H,
+      tick: (dt) => update(dt)
+    };
+  }
+})();
+</script>
+</body>
+</html>

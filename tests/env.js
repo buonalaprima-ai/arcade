@@ -74,6 +74,7 @@ var window = {
   __SIZZLE_TEST__: {},
   __ESPRESSO_TEST__: {},
   __FORKIT_TEST__: {},
+  __POPSHOT_TEST__: {},
   addEventListener: function(t, fn){ this._h[t] = fn; }
   // no AudioContext -> audio stays disabled during tests
 };

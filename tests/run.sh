@@ -44,6 +44,12 @@ if [ ! -s "$TMP/forkit.js" ]; then echo "could not extract fork-it <script>"; ex
 if "$JSC" "$DIR/env.js" "$ROOT/shared/arcade.js" "$TMP/forkit.js" "$DIR/forkit.tests.js"; then :; else rc=1; fi
 
 echo ""
+echo "=== Pop Shot — game regression suite ==="
+awk 'f && /<\/script>/{f=0} f; /<script>/{f=1}' "$ROOT/pop-shot/index.html" > "$TMP/popshot.js"
+if [ ! -s "$TMP/popshot.js" ]; then echo "could not extract pop-shot <script>"; exit 2; fi
+if "$JSC" "$DIR/env.js" "$ROOT/shared/arcade.js" "$TMP/popshot.js" "$DIR/popshot.tests.js"; then :; else rc=1; fi
+
+echo ""
 echo "=== Leaderboard Worker — logic suite ==="
 awk '/>>> TESTABLE/{f=1;next} /<<< TESTABLE/{f=0} f' "$ROOT/leaderboard/worker.js" > "$TMP/helpers.js"
 if [ ! -s "$TMP/helpers.js" ]; then echo "could not extract Worker helpers"; exit 2; fi
